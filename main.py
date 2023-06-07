@@ -14,6 +14,8 @@ import argparse
 import random
 from tqdm import tqdm
 import time
+import logging
+import sys
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--dataset_type', type=str,
@@ -115,7 +117,7 @@ def build_compute_metrics_fn(text_inputs, pairs) -> Callable[[EvalPrediction], D
 # set random seed
 set_random_seed(random_seed)
 
-data_input_file = os.path.join("datasets/finetune", task_name, dataset_type, "input.pt")
+data_input_file = os.path.join("data/finetune", task_name, dataset_type, "input.pt")
 data_inputs = torch.load(data_input_file)
 train_word_ids = data_inputs["train"].word_ids
 train_pairs = data_inputs["train"]["pairs"]
@@ -135,16 +137,16 @@ test_dataset = MyDataSet2(inputs=data_inputs["test"])
 
 # text pretrained model selected
 if text_model_name == 'bert':
-    model_path1 = './models/bert-base-uncased'
+    model_path1 = './data/models/bert-base-uncased'
     config1 = AutoConfig.from_pretrained(model_path1)
     text_pretrained_dict = BertForTokenClassification.from_pretrained(model_path1).state_dict()
 elif text_model_name == 'roberta':  # HERE
-    model_path1 = "./models/roberta-base"
+    model_path1 = "./data/models/roberta-base"
     config1 = AutoConfig.from_pretrained(model_path1)
     text_pretrained_dict = RobertaForTokenClassification.from_pretrained(
         model_path1).state_dict()
 elif text_model_name == 'albert':
-    model_path1 = "./models/albert-base-v2"
+    model_path1 = "./data/models/albert-base-v2"
     config1 = AutoConfig.from_pretrained(model_path1)
     text_pretrained_dict = AlbertForTokenClassification.from_pretrained(
         model_path1).state_dict()
@@ -159,7 +161,7 @@ else:
 
 # image pretrained model selected
 if image_model_name == 'vit':  # HERE
-    model_path2 = "./models/vit-base-patch16-224-in21k"
+    model_path2 = "./data/models/vit-base-patch16-224-in21k"
     config2 = AutoConfig.from_pretrained(model_path2)
     image_pretrained_dict = ViTForImageClassification.from_pretrained(model_path2).state_dict()
 elif image_model_name == 'swin':
@@ -197,6 +199,7 @@ vb_model.load_state_dict(vb_model_dict)
 
 best_metric = dict()
 text_best_metric = dict()
+pbar = tqdm(ncols=80)
 
 training_args = TrainingArguments(
     output_dir=output_dir,
@@ -209,10 +212,18 @@ training_args = TrainingArguments(
     weight_decay=0.01,
     label_names=["labels", "cross_labels"],
     optim="adamw_torch",
-    logging_dir='./logs',
+    logging_dir='./data/logs',
     disable_tqdm=False,
 )
 
+logger = logging.getLogger(__name__)
+
+# Setup logging
+logging.basicConfig(
+    format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
+    datefmt="%m/%d/%Y %H:%M:%S",
+    handlers=[logging.StreamHandler(sys.stdout)],
+)
 
 trainer = Trainer(
     model=vb_model,
@@ -236,7 +247,7 @@ with open(output_result_file, "a", encoding="utf-8") as f:
     model_para["alpha"] = alpha
     model_para["beta"] = beta
 
-    f.write(time.asctime( time.localtime(time.time()) ))
+    f.write(time.asctime( time.localtime(time.time()) ) + "\n")
     f.write("参数:"+str(model_para) + "\n")
     f.write("multi: " + str(best_metric)+"\n")
     f.write("text: " + str(text_best_metric)+"\n")

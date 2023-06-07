@@ -1,4 +1,0 @@
-transformers
-datasets
-sklearn
-pytorch-crf

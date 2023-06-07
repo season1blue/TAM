@@ -26,12 +26,3 @@ Other parameters introduced in code. There are other preprocess for other use, n
     sh run.sh
 other training parameters introduced in code
 
-## 5. model DTCA
-Implementation in code model/modeling_dtca.py
-
-## 6. ablation study
-Set alpha = 0 or beta = 0
-
-## Welcome any questions!
-
-
