@@ -4,6 +4,7 @@ from transformers import AutoConfig, TrainingArguments, EvalPrediction
 from utils.Trainer import Trainer
 from transformers import BertForTokenClassification, RobertaForTokenClassification, AlbertForTokenClassification, ViTForImageClassification, SwinForImageClassification, DeiTModel, ConvNextForImageClassification
 from model import DTCAModel
+from model import GANModel
 import torch
 from utils.MyDataSet import MyDataSet2
 from utils.metrics import cal_f1
@@ -183,8 +184,9 @@ else:
     exit()
 
 print(time.asctime( time.localtime(time.time()) ))
+
 # init DTCAModel
-vb_model = DTCAModel(config1, config2, text_num_labels=5, text_model_name=text_model_name,
+vb_model = GANModel(config1, config2, text_num_labels=5, text_model_name=text_model_name,
                      image_model_name=image_model_name, alpha=alpha, beta=beta)
 vb_model_dict = vb_model.state_dict()
 
@@ -199,7 +201,9 @@ vb_model.load_state_dict(vb_model_dict)
 
 best_metric = dict()
 text_best_metric = dict()
-pbar = tqdm(ncols=80)
+
+# for t in train_dataset: t.keys() # input_ids', 'attention_mask', 'labels', 'cross_labels', 'pixel_values'
+
 
 training_args = TrainingArguments(
     output_dir=output_dir,
@@ -230,8 +234,7 @@ trainer = Trainer(
     args=training_args,
     train_dataset=train_dataset,
     eval_dataset=test_dataset,
-    compute_metrics=build_compute_metrics_fn(
-        text_inputs=data_inputs["test"], pairs=test_pairs),
+    compute_metrics=build_compute_metrics_fn(text_inputs=data_inputs["test"], pairs=test_pairs),
 )
 trainer.train()
 

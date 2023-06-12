@@ -1,3 +1,7 @@
+# 忽略not init权重的warning提示
+from transformers import logging
+logging.set_verbosity_error()
+
 import torch.nn as nn
 import torch
 import torch.nn as nn
@@ -9,10 +13,8 @@ import numpy as np
 import os
 from transformers import RobertaModel, BertModel, AlbertModel, ElectraModel, ViTModel, SwinModel, DeiTModel, ConvNextModel
 
+from model.GAN import UnimoEncoder
 
-# 忽略not init权重的warning提示
-from transformers import logging
-logging.set_verbosity_error()
 
 class DTCAModel(nn.Module):
     def __init__(self, config1, config2, text_num_labels, alpha, beta, text_model_name="roberta", image_model_name='vit'):
@@ -117,16 +119,8 @@ class DTCAModel(nn.Module):
         else:
             image_outputs = None
 
-        text_last_hidden_states = text_outputs["last_hidden_state"]
-        image_last_hidden_states = image_outputs["last_hidden_state"]
-
-        # TODO Multi-GAN
-
-
-
-
-
-
+        text_last_hidden_states = text_outputs["last_hidden_state"]  # 32, 60, 768
+        image_last_hidden_states = image_outputs["last_hidden_state"]  # 32, 197, 768
 
         # * text only # text_loss 
         sequence_output1 = self.dropout(text_last_hidden_states)
@@ -154,6 +148,7 @@ class DTCAModel(nn.Module):
 
         # end train
         return {"loss": loss, "logits": text_token_logits, "cross_logits": cross_logits, }
+
 
 
 class MultiHeadAttention(nn.Module):
