@@ -548,7 +548,7 @@ class UnimoEncoder(nn.Module):
         ### Multi-level Cross-modal Generation (MCG)
 
         self.text_generator = nn.ModuleList([Generator(vision_config, 60)])
-        self.vision_generator = nn.ModuleList([Generator(text_config, 197)])
+        self.vision_generator = nn.ModuleList([Generator(text_config, 1)])
 
         ###Stage-refined Context Sampler (SCS)
         self.patch_selector = nn.ModuleList([ContextSampler(768) for _ in range(vision_config.num_hidden_layers)])
@@ -582,8 +582,10 @@ class UnimoEncoder(nn.Module):
         all_patch_policy = ()
         all_token_policy = ()
 
+
         vision_hidden_states = vision_embeds
         text_hidden_states = text_embeds
+
 
         ## initial mask selector
         bz, token_len, hidden_size = text_hidden_states.size()
@@ -603,16 +605,15 @@ class UnimoEncoder(nn.Module):
                 generated_text_hidden_states = generated_text_hidden_states.contiguous()
                 visual_past_key_values = [generated_text_hidden_states.view(bsz, 12, token_length, dsize//12), generated_text_hidden_states.view(bsz, 12, token_length, dsize//12)]
 
-            if idx != 0 :
-                vision_layer_module = self.vision_layers[idx]
-                vision_layer_output = vision_layer_module(
-                        vision_hidden_states,
-                        output_attentions=output_attentions,
-                        past_key_values=visual_past_key_values,
-                        current_layer=idx,
-                        output_qks=output_qks,
-                )
-                vision_hidden_states = vision_layer_output[0]
+            vision_layer_module = self.vision_layers[idx]
+            vision_layer_output = vision_layer_module(
+                    vision_hidden_states,
+                    output_attentions=output_attentions,
+                    past_key_values=visual_past_key_values,
+                    current_layer=idx,
+                    output_qks=output_qks,
+            )
+            vision_hidden_states = vision_layer_output[0]
 
             # text
             # TODO: 9-12 layers past vison qks to text
@@ -623,20 +624,19 @@ class UnimoEncoder(nn.Module):
                 generated_vision_hidden_states = generated_vision_hidden_states.contiguous()
                 text_past_key_values = [generated_vision_hidden_states.view(bsz, 12, patch_length, dsize//12) ,generated_vision_hidden_states.view(bsz, 12, patch_length, dsize//12)]
 
-            if idx != 0 :
-                layer_head_mask = head_mask[idx] if head_mask is not None else None
-                text_layer_module = self.text_layer[idx]
-                text_layer_output = text_layer_module(
-                        text_hidden_states,
-                        attention_mask=attention_mask,
-                        head_mask=layer_head_mask,
-                        visual_hidden_state=None,
-                        past_key_values=text_past_key_values,
-                        output_attentions=output_attentions,
-                        output_qks=output_qks,
-                        current_layer=idx,
-                )
-                text_hidden_states = text_layer_output[0]
+            layer_head_mask = head_mask[idx] if head_mask is not None else None
+            text_layer_module = self.text_layer[idx]
+            text_layer_output = text_layer_module(
+                    text_hidden_states,
+                    attention_mask=attention_mask,
+                    head_mask=layer_head_mask,
+                    visual_hidden_state=None,
+                    past_key_values=text_past_key_values,
+                    output_attentions=output_attentions,
+                    output_qks=output_qks,
+                    current_layer=idx,
+            )
+            text_hidden_states = text_layer_output[0]
 
 
             # Stage-refined Context Sampler (SCS)
@@ -644,7 +644,7 @@ class UnimoEncoder(nn.Module):
             spatial_text_hidden_states = text_hidden_states[:, 1:]
             pred_token_score = self.token_selector[idx](spatial_text_hidden_states, prev_token_decision).reshape(bz,-1,2)
             token_hard_keep_decision = F.gumbel_softmax(pred_token_score, hard=True)[:, :, 0:1]
-            if idx != 0:
+            if idx !=0:
                 token_hard_keep_decision = token_hard_keep_decision
                 token_hard_keep_decision = (token_hard_keep_decision != 0.).float()
             cls_policy = torch.ones(bz, 1, 1, dtype=attention_mask.dtype, device=attention_mask.device)
@@ -680,9 +680,9 @@ class UnimoEncoder(nn.Module):
 
 
 
-            # if output_attentions:
-            #     all_vision_attentions = all_vision_attentions + (vision_layer_output[1], )
-            #     all_text_attentions = all_text_attentions + (text_layer_output[1], )
+            if output_attentions:
+                all_vision_attentions = all_vision_attentions + (vision_layer_output[1], )
+                all_text_attentions = all_text_attentions + (text_layer_output[1], )
 
             if patch_policy != None and token_policy != None:
                 patch_policy = patch_policy.squeeze(1).transpose(-1,-2)

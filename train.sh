@@ -1,5 +1,5 @@
 #! /bin/bash
-python ./main.py \
+python ./Train.py \
 --epochs 150 \
 --dataset_type 2015 \
 --batch_size 8 \

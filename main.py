@@ -120,6 +120,7 @@ set_random_seed(random_seed)
 
 data_input_file = os.path.join("data/finetune", task_name, dataset_type, "input.pt")
 data_inputs = torch.load(data_input_file)
+
 train_word_ids = data_inputs["train"].word_ids
 train_pairs = data_inputs["train"]["pairs"]
 data_inputs["train"].pop("pairs")
@@ -205,6 +206,16 @@ text_best_metric = dict()
 # for t in train_dataset: t.keys() # input_ids', 'attention_mask', 'labels', 'cross_labels', 'pixel_values'
 
 
+
+
+
+
+
+
+
+
+
+
 training_args = TrainingArguments(
     output_dir=output_dir,
     evaluation_strategy="epoch",
@@ -239,6 +250,10 @@ trainer = Trainer(
 trainer.train()
 
 # output = trainer.predict(test_dataset=test_dataset)
+
+
+
+
 
 # save results
 with open(output_result_file, "a", encoding="utf-8") as f:

@@ -47,6 +47,7 @@ def cal_f1(p_pred_labels,p_inputs,p_pairs,is_result=False):
         precision = correct_num / predict_num
     if gold_num != 0:
         recall = correct_num / gold_num
+
     if precision != 0 or recall != 0:
         f1 = (2 * precision * recall) / (precision + recall)
     if is_result:

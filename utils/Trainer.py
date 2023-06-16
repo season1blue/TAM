@@ -2073,6 +2073,7 @@ class Trainer:
 
         self._memory_tracker.stop_and_update_metrics(metrics)
 
+        print("log1")
         self.log(metrics)
 
         run_dir = self._get_output_dir(trial)
@@ -2644,6 +2645,8 @@ class Trainer:
 
         output = {**logs, **{"step": self.state.global_step}}
         self.state.log_history.append(output)
+        print("logs", logs)
+        
         self.control = self.callback_handler.on_log(self.args, self.state, self.control, logs)
 
     def _prepare_input(self, data: Union[torch.Tensor, Any]) -> Union[torch.Tensor, Any]:
