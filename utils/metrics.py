@@ -2,13 +2,13 @@ from transformers import AutoConfig,TrainingArguments,Trainer,EvalPrediction,Ber
 from typing import Callable, Dict
 
 
-def cal_f1(p_pred_labels,p_inputs,p_pairs,is_result=False):
+def cal_f1(p_pred_labels, text_inputs, p_pairs, is_result=False):
     gold_num = 0
     predict_num = 0
     correct_num = 0
     pred_pair_list = []
     for i, pred_label in enumerate(p_pred_labels):
-        word_ids = p_inputs.word_ids(batch_index=i)
+        word_ids = text_inputs.word_ids(batch_index=i)
         flag = False
         pred_pair = set()
         sentiment = 0
@@ -43,17 +43,15 @@ def cal_f1(p_pred_labels,p_inputs,p_pairs,is_result=False):
     precision = 0
     recall = 0
     f1 = 0
-    if predict_num != 0:
-        precision = correct_num / predict_num
-    if gold_num != 0:
-        recall = correct_num / gold_num
 
-    if precision != 0 or recall != 0:
-        f1 = (2 * precision * recall) / (precision + recall)
+    precision = correct_num / predict_num if predict_num != 0 else 0
+    recall = correct_num / gold_num if gold_num != 0 else 0
+    f1 = (2 * precision * recall) / (precision + recall) if precision != 0 or recall != 0 else 0
+
     if is_result:
-        return precision*100, recall*100, f1*100,pred_pair_list
+        return precision, recall, f1, pred_pair_list
     else:
-        return precision*100, recall*100, f1*100
+        return precision, recall, f1
 
 def cal_single_f1(p_pred_labels,p_inputs,p_pairs,is_result=False):
     gold_num = 0

@@ -1,11 +1,10 @@
 import os.path
-
+import torch
 from transformers import AutoConfig, TrainingArguments, EvalPrediction
 from utils.Trainer import Trainer
 from transformers import BertForTokenClassification, RobertaForTokenClassification, AlbertForTokenClassification, ViTForImageClassification, SwinForImageClassification, DeiTModel, ConvNextForImageClassification
 from model import DTCAModel
 from model import GANModel
-import torch
 from utils.MyDataSet import MyDataSet2
 from utils.metrics import cal_f1
 from typing import Callable, Dict
@@ -56,7 +55,6 @@ text_model_name = args.text_model_name
 image_model_name = args.image_model_name
 output_result_file = args.output_result_file
 random_seed = args.random_seed
-# endregion
 
 
 def set_random_seed(random_seed):
