@@ -3,22 +3,21 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader, RandomSampler, DistributedSampler, SequentialSampler
 from torch.utils.tensorboard import SummaryWriter
-
 from tqdm import tqdm
 from transformers.models.auto.modeling_auto import MODEL_MAPPING
 from transformers import (WEIGHTS_NAME, AdamW, get_linear_schedule_with_warmup)
-from model import GANModel
+from time import time, asctime, localtime
+import logging
+# 忽略not init权重的warning提示
+from transformers import logging as log_ignore
+log_ignore.set_verbosity_error()
 
+from model.model import GANModel
 from utils.MyDataSet import MyDataSet2
 from utils.metrics import cal_f1
-from utils.utils import set_random_seed, model_select, parse_arg
-from time import time, asctime, localtime
+from utils.utils import set_random_seed, model_select, parse_arg, evaluate
 
-# 忽略not init权重的warning提示
-from transformers import logging
-logging.set_verbosity_error()
 
-import logging
 # parameters
 args = parse_arg()
 args.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -43,49 +42,9 @@ logger.addHandler(fh)
 logger.addHandler(ch)
 
 
-def evaluate(args, vb_model, eval_dataloader, text_inputs, pairs):
-    eval_loss = 0.0
-    nb_eval_steps = 0
-    vb_model.to(args.device)
-    vb_model.eval()
 
-    text_pred_list = []
-    cross_pred_list = []
-    with torch.no_grad():
-        for i, batch in enumerate(eval_dataloader):
-            for k in batch:
-                if isinstance(batch[k], torch.Tensor):
-                    batch[k] = batch[k].to(args.device)
-
-            outputs = vb_model(**batch)
-            tmp_eval_loss, text_logits, cross_logits = outputs["loss"], outputs["logits"], outputs["cross_logits"]
-            eval_loss += tmp_eval_loss
-
-            text_pred_labels = np.argmax(text_logits.cpu(), -1)
-            text_pred_list.append(text_pred_labels)
-            pred_labels = np.argmax(cross_logits.cpu(), -1)
-            cross_pred_list.append(pred_labels)
-
-            nb_eval_steps += 1
-
-    text_pred_sum = np.vstack(text_pred_list)
-    cross_pred_sum = np.vstack(cross_pred_list)
-
-    # cross_precision, cross_recall, cross_f1 = cal_f1(cross_pred_sum, text_inputs, pairs)
-    text_precision, text_recall, text_f1 = cal_f1(text_pred_sum, text_inputs, pairs)
-
-    eval_loss = eval_loss.item() / nb_eval_steps
-    
-    results = {"f1": text_f1, "precision" : text_precision, "recall": text_recall, "loss": float(eval_loss)}
-    # logger.info(f"Eval loss: {eval_loss}, Eval time: {time() - time_eval_beg:2f}")
-
-    return results, eval_loss
-
-
-
-
-
-logger.info(asctime(localtime(time()) ))
+if not args.enable_log :
+    logging.disable(logging.ERROR)
 
 # set random seed
 set_random_seed(args.random_seed)
@@ -111,7 +70,6 @@ test_dataset = MyDataSet2(inputs=data_inputs["test"])
 train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size)
 dev_dataloader = DataLoader(dev_dataset, batch_size=args.batch_size)
 test_dataloader = DataLoader(test_dataset, batch_size=args.batch_size)
-
 
 
 
@@ -153,11 +111,8 @@ vb_model.zero_grad()
 epoch_start_time = time()
 step_start_time = None
 
+logger.info("======================== New Round =============================")
 for epoch in range(epochs_trained, int(args.epochs)):
-    # if epoch == epochs_trained:
-    #     print(f"Epoch: {epoch + 1}/{int(args.epochs)} begin.")
-    # else:
-    #     print(f"Epoch: {epoch + 1}/{int(args.epochs)} begin ({(time() - epoch_start_time) / (epoch - epochs_trained):2f}s/epoch).")
 
     for step, batch in tqdm(enumerate(train_dataloader), desc="Train", ncols=50, total=len(train_dataloader)):
         vb_model.train()
@@ -166,17 +121,20 @@ for epoch in range(epochs_trained, int(args.epochs)):
             if isinstance(batch[k], torch.Tensor):
                 batch[k] = batch[k].to(args.device)  #['input_ids', 'attention_mask', 'labels', 'cross_labels', 'pixel_values'
 
+        # with torch.autograd.detect_anomaly():
         outputs = vb_model(**batch)
         loss = outputs["loss"]
-        loss.backward()
-        tr_loss += loss.item()
 
-        if (step + 1) % args.gradient_accumulation_steps == 0:
-            torch.nn.utils.clip_grad_norm_(vb_model.parameters(), args.max_grad_norm)
-            optimizer.step()
-            scheduler.step()  # Update learning rate schedule
-            vb_model.zero_grad()
-            global_step += 1
+        if not torch.any(torch.isnan(loss)):
+            loss.backward()
+            # tr_loss += loss.item()
+
+            if (step + 1) % args.gradient_accumulation_steps == 0:
+                torch.nn.utils.clip_grad_norm_(vb_model.parameters(), args.max_grad_norm)
+                optimizer.step()
+                scheduler.step()  # Update learning rate schedule
+                vb_model.zero_grad()
+                global_step += 1
 
             # if args.logging_steps > 0 and global_step % args.logging_steps == 0:
             #     # # Log metrics
@@ -203,10 +161,9 @@ for epoch in range(epochs_trained, int(args.epochs)):
                     best_result = results
                     best_result["epoch"] = epoch
                 print()
-                logger.info(
-                    "### EVAL RESULT: f1:{0:.3f}, precision:{1:.3f}, recall:{2:.3f}, loss:{3:.3f} at {4}".format(results["f1"], results["precision"], results["recall"], results["loss"], epoch))
-                logger.info(
-                    "### BEST RESULT: f1:{0:.3f}, precision:{1:.3f}, recall:{2:.3f}, loss:{3:.3f} at {4}".format(best_result["f1"], best_result["precision"], best_result["recall"], best_result["loss"], best_result["epoch"]))
+                logger.info("#RES: f1:{0:.3f}, precision:{1:.3f}, recall:{2:.3f}, loss:{3:.3f} at {4}".format(results["f1"], results["precision"], results["recall"], results["loss"], epoch))
+                logger.info("Best: f1:{0:.3f}, precision:{1:.3f}, recall:{2:.3f}, loss:{3:.3f} at {4}".format(best_result["f1"], best_result["precision"], best_result["recall"], best_result["loss"], best_result["epoch"]))
+                logger.info("---------")
 
                 # for key, value in results.items():
                 #     tb_writer.add_scalar("eval_{}".format(key), value, global_step)

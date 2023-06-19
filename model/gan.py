@@ -431,6 +431,10 @@ class CLIPEncoderLayer(nn.Module):
         self.mlp = CLIPMLP(config)
         self.layer_norm2 = nn.LayerNorm(self.embed_dim)
 
+        self.num_heads = config.num_attention_heads
+        self.head_dim = self.embed_dim // self.num_heads
+        self.att = nn.MultiheadAttention(self.embed_dim, self.num_heads, batch_first=True) 
+
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -450,33 +454,55 @@ class CLIPEncoderLayer(nn.Module):
                 Whether or not to return the attentions tensors of all attention layers. See ``attentions`` under
                 returned tensors for more detail.
         """
-        residual = hidden_states
+        choice = False
+        if choice:
+            residual = hidden_states
 
-        hidden_states = self.layer_norm1(hidden_states)
-        hidden_states, attn_weights, qks = self.self_attn(
-            hidden_states=hidden_states,
-            output_attentions=output_attentions,
-            past_key_values=past_key_values,
-            output_qks=output_qks,
-            current_layer=current_layer,
-        )
-        hidden_states = residual + hidden_states
+            hidden_states = self.layer_norm1(hidden_states)
 
-        residual = hidden_states
-        hidden_states = self.layer_norm2(hidden_states)
-        hidden_states = self.mlp(hidden_states)
-        hidden_states = residual + hidden_states
+            bsz, tgt_len, embed_dim = hidden_states.size()
+            proj_shape = (bsz, -1, self.embed_dim)
+            past_key_values[0] = past_key_values[0].view(*proj_shape)
+            past_key_values[1] = past_key_values[1].view(*proj_shape)
+            hidden_states, _ = self.att(hidden_states, past_key_values[0], past_key_values[1])  # 8, 197, 768
 
-        outputs = (hidden_states,)
+            hidden_states = residual + hidden_states
 
-        if output_attentions:
-            outputs += (attn_weights,)
+            residual = hidden_states
+            hidden_states = self.layer_norm2(hidden_states)
+            hidden_states = self.mlp(hidden_states)
+            hidden_states = residual + hidden_states
 
-        if output_qks:
-            outputs += (qks, )
+            outputs = hidden_states
 
-        return outputs
+            return outputs
+        else:
+            residual = hidden_states
 
+            hidden_states = self.layer_norm1(hidden_states)
+            hidden_states, attn_weights, qks = self.self_attn(
+                hidden_states=hidden_states,
+                output_attentions=output_attentions,
+                past_key_values=past_key_values,
+                output_qks=output_qks,
+                current_layer=current_layer,
+            )
+            hidden_states = residual + hidden_states
+
+            residual = hidden_states
+            hidden_states = self.layer_norm2(hidden_states)
+            hidden_states = self.mlp(hidden_states)
+            hidden_states = residual + hidden_states
+
+            outputs = (hidden_states,)
+
+            if output_attentions:
+                outputs += (attn_weights,)
+
+            if output_qks:
+                outputs += (qks, )
+
+            return outputs
 
 class BertLayer(nn.Module):
     def __init__(self, config):
@@ -487,6 +513,10 @@ class BertLayer(nn.Module):
         self.add_cross_attention = config.add_cross_attention
         self.intermediate = BertIntermediate(config)
         self.output = BertOutput(config)
+
+        self.embed_dim = config.hidden_size
+        self.num_heads = config.num_attention_heads
+        self.att = nn.MultiheadAttention(self.embed_dim, self.num_heads, batch_first=True) 
 
     def forward(
         self,
@@ -501,6 +531,13 @@ class BertLayer(nn.Module):
     ):
         # decoder uni-directional self-attention cached key/values tuple is at positions 1,2
         # self_attn_past_key_value = past_key_value[:2] if past_key_value is not None else None
+
+        # proj_shape = (hidden_states.size(0), -1, self.embed_dim)
+        # past_key_values[0] = past_key_values[0].view(*proj_shape)
+        # past_key_values[1] = past_key_values[1].view(*proj_shape)
+
+        # hidden_states, _ = self.att(hidden_states, past_key_values[0], past_key_values[1])  # 8, 60, 768
+
         self_attention_outputs, qks = self.attention(
             hidden_states,
             attention_mask,
@@ -571,7 +608,6 @@ class UnimoEncoder(nn.Module):
         all_text_hidden_states = () if output_hidden_states else None
         all_vision_attentions = () if output_attentions else None
         all_text_attentions = () if output_attentions else None
-
 
         all_generated_vision_hidden_states = ()
         all_generated_text_hidden_states = ()
@@ -673,6 +709,7 @@ class UnimoEncoder(nn.Module):
             generated_text_hidden_states = text_generator(vision_hidden_states,patch_policy)
             vision_generator = self.vision_generator[0]
             generated_vision_hidden_states = vision_generator(text_hidden_states, token_policy)
+
 
             ## cycle consistency for MCG
             cycle_text_hidden_state =  text_generator(generated_vision_hidden_states)

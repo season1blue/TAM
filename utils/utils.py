@@ -9,6 +9,80 @@ from tqdm import tqdm
 from transformers.models.auto.modeling_auto import MODEL_MAPPING
 from transformers import (WEIGHTS_NAME, AutoConfig)
 from transformers import BertForTokenClassification, RobertaForTokenClassification, AlbertForTokenClassification, ViTForImageClassification, SwinForImageClassification, DeiTModel, ConvNextForImageClassification
+import ot
+import torch.nn.functional as F
+
+
+def parse_arg():
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument('--dataset_type', type=str, default='2015', nargs='?', help='display a string')
+    parser.add_argument('--task_name', type=str, default='dualc', nargs='?', help='display a string')
+    parser.add_argument('--batch_size', type=int, default=4, nargs='?', help='display an integer')
+    parser.add_argument('--output_result_file', type=str, default="./result.txt", nargs='?', help='display a string')
+    parser.add_argument('--output_dir', type=str, default="./results", nargs='?', help='display a string')
+    parser.add_argument('--log_dir', type=str, default="./data/log.log")
+    parser.add_argument('--lr', type=float, default=2e-5, nargs='?', help='display a float')
+    parser.add_argument('--epochs', type=int, default=100, nargs='?', help='display an integer')
+    parser.add_argument('--alpha', type=float, default=0.6, nargs='?', help='display a float')
+    parser.add_argument('--beta', type=float, default=0.6, nargs='?', help='display a float')
+    parser.add_argument('--text_model_name', type=str, default="roberta", nargs='?')
+    parser.add_argument('--image_model_name', type=str, default="vit", nargs='?')
+    parser.add_argument('--random_seed', type=int, default=2022, nargs='?')
+
+    parser.add_argument("--adam_epsilon", default=1e-8, type=float, help="Epsilon for Adam optimizer.")
+    parser.add_argument("--weight_decay", default=0.01, type=float)
+    parser.add_argument("--warmup_steps", default=100, type=int, help="Linear warmup over warmup_steps.")
+    parser.add_argument( "--gradient_accumulation_steps", type=int, default=1, help="Number of updates steps to accumulate before performing a backward/update pass.",)
+    parser.add_argument("--logging_steps", type=int, default=500, help="Log every X updates steps.")  # origin 50
+    parser.add_argument("--max_grad_norm", default=1.0, type=float, help="Max gradient norm.")
+    parser.add_argument("--save_steps", type=int, default=300, help="Save checkpoint every X updates steps.")  # origin 500
+    parser.add_argument("--max_steps", default=-1, type=int, help="If > 0: set total number of training steps to perform. Override num_train_epochs.",)
+    parser.add_argument("--enable_log", action="store_true")
+    
+
+    return parser.parse_args()
+
+
+
+
+def evaluate(args, vb_model, eval_dataloader, text_inputs, pairs):
+    eval_loss = 0.0
+    nb_eval_steps = 0
+    vb_model.to(args.device)
+    vb_model.eval()
+
+    text_pred_list = []
+    cross_pred_list = []
+    with torch.no_grad():
+        for i, batch in enumerate(eval_dataloader):
+            for k in batch:
+                if isinstance(batch[k], torch.Tensor):
+                    batch[k] = batch[k].to(args.device)
+
+            outputs = vb_model(**batch)
+            tmp_eval_loss, text_logits, cross_logits = outputs["loss"], outputs["logits"], outputs["cross_logits"]
+            eval_loss += tmp_eval_loss
+
+            text_pred_labels = np.argmax(text_logits.cpu(), -1)
+            text_pred_list.append(text_pred_labels)
+            pred_labels = np.argmax(cross_logits.cpu(), -1)
+            cross_pred_list.append(pred_labels)
+
+            nb_eval_steps += 1
+
+    text_pred_sum = np.vstack(text_pred_list)
+    cross_pred_sum = np.vstack(cross_pred_list)
+
+    # cross_precision, cross_recall, cross_f1 = cal_f1(cross_pred_sum, text_inputs, pairs)
+    text_precision, text_recall, text_f1 = cal_f1(text_pred_sum, text_inputs, pairs)
+
+    eval_loss = eval_loss.item() / nb_eval_steps
+    
+    results = {"f1": text_f1, "precision" : text_precision, "recall": text_recall, "loss": float(eval_loss)}
+    # logger.info(f"Eval loss: {eval_loss}, Eval time: {time() - time_eval_beg:2f}")
+
+    return results, eval_loss
 
 
 def set_random_seed(random_seed):
@@ -74,30 +148,82 @@ def model_select(args):
 
 
 
-def parse_arg():
-    parser = argparse.ArgumentParser()
 
-    parser.add_argument('--dataset_type', type=str, default='2015', nargs='?', help='display a string')
-    parser.add_argument('--task_name', type=str, default='dualc', nargs='?', help='display a string')
-    parser.add_argument('--batch_size', type=int, default=4, nargs='?', help='display an integer')
-    parser.add_argument('--output_result_file', type=str, default="./result.txt", nargs='?', help='display a string')
-    parser.add_argument('--output_dir', type=str, default="./results", nargs='?', help='display a string')
-    parser.add_argument('--log_dir', type=str, default="./data/log.log")
-    parser.add_argument('--lr', type=float, default=2e-5, nargs='?', help='display a float')
-    parser.add_argument('--epochs', type=int, default=100, nargs='?', help='display an integer')
-    parser.add_argument('--alpha', type=float, default=0.6, nargs='?', help='display a float')
-    parser.add_argument('--beta', type=float, default=0.6, nargs='?', help='display a float')
-    parser.add_argument('--text_model_name', type=str, default="roberta", nargs='?')
-    parser.add_argument('--image_model_name', type=str, default="vit", nargs='?')
-    parser.add_argument('--random_seed', type=int, default=2022, nargs='?')
 
-    parser.add_argument("--adam_epsilon", default=1e-8, type=float, help="Epsilon for Adam optimizer.")
-    parser.add_argument("--weight_decay", default=0.01, type=float)
-    parser.add_argument("--warmup_steps", default=100, type=int, help="Linear warmup over warmup_steps.")
-    parser.add_argument( "--gradient_accumulation_steps", type=int, default=1, help="Number of updates steps to accumulate before performing a backward/update pass.",)
-    parser.add_argument("--logging_steps", type=int, default=500, help="Log every X updates steps.")  # origin 50
-    parser.add_argument("--max_grad_norm", default=1.0, type=float, help="Max gradient norm.")
-    parser.add_argument("--save_steps", type=int, default=300, help="Save checkpoint every X updates steps.")  # origin 500
-    parser.add_argument("--max_steps", default=-1, type=int, help="If > 0: set total number of training steps to perform. Override num_train_epochs.",)
 
-    return parser.parse_args()
+
+def _calculate_distillation_loss(features, teacher_features, T = 6, teacher_is_score=True):
+    if teacher_is_score:
+        teacher_prob=F.softmax(teacher_features/T, dim=-1)
+    else:
+        teacher_prob=teacher_features
+
+    KD_loss = torch.nn.functional.kl_div(F.log_softmax(features/T, dim=-1),
+                                         teacher_prob,
+                                         reduction='none') * T
+    return KD_loss.sum((1,2))
+
+def ws_dis(aa, bb):
+    loss = 0
+    for a,b in zip(aa, bb):
+        M = ot.dist(a, b, metric='euclidean').detach().cpu().numpy() # 距离计算方式, 'euclidean' / 'cosine'
+        alpha = ot.unif(len(a))
+        beta = ot.unif(len(b))
+        
+        pW = ot.emd2(alpha, beta, M)
+        loss += pW
+
+    return loss
+
+
+def cal_loss(output):
+    # print(len(output.all_generated_vision_hidden_states)) # 12
+    # print(output.all_generated_vision_hidden_states[0].size())  8, 197, 768
+    # print(output.vision_states[0].size()) # 8, 197, 768
+    # print(output.all_patch_policy) 
+    img_tag = 1
+    cycle = False
+    loss = 0
+    if output.all_generated_vision_hidden_states and output.all_generated_text_hidden_states and output.vision_states and output.hidden_states:
+        # print("-----")
+        # print(output.all_generated_vision_hidden_states)
+        # print(output.all_generated_text_hidden_states)
+        vae_loss_t2v = [
+            ws_dis(v, k.detach())  * m / m.sum((-1, -2))
+            for v, k, m in zip(output.all_generated_vision_hidden_states,
+                               output.vision_states, output.all_patch_policy)
+        ]
+        vae_loss_v2t = [
+            ws_dis(v, k.detach()) * m / m.sum((-1, -2))
+            for v, k, m in zip(output.all_generated_text_hidden_states,
+                               output.hidden_states, output.all_token_policy)  #!
+        ]
+
+        vae_loss = ((sum(vae_loss_t2v) * img_tag).mean() +
+                    (sum(vae_loss_v2t) * img_tag).mean()) / len(
+                        output.all_generated_vision_hidden_states)
+        loss += vae_loss * 0.001
+        
+        # if 0 < loss.item() < 100000  :
+        #     pass
+        # else:
+        #     print(vae_loss_t2v.item(), vae_loss_v2t.item())
+        #     print("vision", output.all_generated_vision_hidden_states)
+        #     print("text", output.all_generated_text_hidden_states)
+        #     exit()
+
+        # if output.all_cycle_vision_hidden_states and output.all_cycle_text_hidden_states and cycle:
+        #     cycle_loss_t = [
+        #         _calculate_distillation_loss(v, k) for v, k in zip(
+        #             output.all_cycle_text_hidden_states, output.hidden_states)
+        #     ]
+        #     cycle_loss_v = [
+        #         _calculate_distillation_loss(v, k)
+        #         for v, k in zip(output.all_cycle_vision_hidden_states,
+        #                         output.vision_states)
+        #     ]
+        #     cycle_loss = (sum(cycle_loss_t) * img_tag).mean() + (
+        #         sum(cycle_loss_v) * img_tag).mean() / len(
+        #             output.all_generated_vision_hidden_states)
+        #     loss += cycle_loss * 0.001
+    return loss

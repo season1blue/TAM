@@ -13,7 +13,7 @@ import numpy as np
 import os
 from transformers import RobertaModel, BertModel, AlbertModel, ElectraModel, ViTModel, SwinModel, DeiTModel, ConvNextModel
 
-from model.GAN import UnimoEncoder
+from model.gan import UnimoEncoder
 
 
 class DTCAModel(nn.Module):

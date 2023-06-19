@@ -49,9 +49,9 @@ def cal_f1(p_pred_labels, text_inputs, p_pairs, is_result=False):
     f1 = (2 * precision * recall) / (precision + recall) if precision != 0 or recall != 0 else 0
 
     if is_result:
-        return precision, recall, f1, pred_pair_list
+        return precision * 100, recall * 100, f1 * 100, pred_pair_list
     else:
-        return precision, recall, f1
+        return precision * 100, recall * 100, f1 * 100
 
 def cal_single_f1(p_pred_labels,p_inputs,p_pairs,is_result=False):
     gold_num = 0
