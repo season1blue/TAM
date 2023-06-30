@@ -34,20 +34,17 @@ def parse_arg():
     parser.add_argument("--adam_epsilon", default=1e-8, type=float, help="Epsilon for Adam optimizer.")
     parser.add_argument("--weight_decay", default=0.01, type=float)
     parser.add_argument("--warmup_steps", default=100, type=int, help="Linear warmup over warmup_steps.")
-    parser.add_argument("--gradient_accumulation_steps", type=int, default=1, help="Number of updates steps to accumulate before performing a backward/update pass.",)
+    parser.add_argument( "--gradient_accumulation_steps", type=int, default=1, help="Number of updates steps to accumulate before performing a backward/update pass.",)
     parser.add_argument("--logging_steps", type=int, default=500, help="Log every X updates steps.")  # origin 50
     parser.add_argument("--max_grad_norm", default=1.0, type=float, help="Max gradient norm.")
     parser.add_argument("--save_steps", type=int, default=300, help="Save checkpoint every X updates steps.")  # origin 500
     parser.add_argument("--max_steps", default=-1, type=int, help="If > 0: set total number of training steps to perform. Override num_train_epochs.",)
     
     parser.add_argument("--enable_log", action="store_true")
-
     parser.add_argument("--add_gan", action="store_true")
     parser.add_argument("--add_gan_loss", action="store_true", help="有提升就是会慢，平时可以收起来")
     parser.add_argument("--add_cycle", action="store_true")
     parser.add_argument("--add_gpt", action="store_true")
-
-    
 
     return parser.parse_args()
 
@@ -184,12 +181,13 @@ def ws_dis(aa, bb):
     return loss
 
 
-def cal_loss(args, output):
+def cal_loss(output):
     # print(len(output.all_generated_vision_hidden_states)) # 12
     # print(output.all_generated_vision_hidden_states[0].size())  8, 197, 768
     # print(output.vision_states[0].size()) # 8, 197, 768
     # print(output.all_patch_policy) 
     img_tag = 1
+    cycle = False
     loss = 0
     if output.all_generated_vision_hidden_states and output.all_generated_text_hidden_states and output.vision_states and output.hidden_states:
         # print("-----")
@@ -210,6 +208,7 @@ def cal_loss(args, output):
                     (sum(vae_loss_v2t) * img_tag).mean()) / len(
                         output.all_generated_vision_hidden_states)
         loss += vae_loss * 0.001
+        
         # if 0 < loss.item() < 100000  :
         #     pass
         # else:
@@ -218,18 +217,18 @@ def cal_loss(args, output):
         #     print("text", output.all_generated_text_hidden_states)
         #     exit()
 
-        if output.all_cycle_vision_hidden_states and output.all_cycle_text_hidden_states and args.add_cycle:
-            cycle_loss_t = [
-                ws_dis(v, k) for v, k in zip(
-                    output.all_cycle_text_hidden_states, output.hidden_states)
-            ]
-            cycle_loss_v = [
-                ws_dis(v, k)
-                for v, k in zip(output.all_cycle_vision_hidden_states,
-                                output.vision_states)
-            ]
-            cycle_loss = np.mean(sum(cycle_loss_t) * img_tag) + np.mean(
-                sum(cycle_loss_v) * img_tag) / len(
-                    output.all_generated_vision_hidden_states)
-            loss += cycle_loss * 0.001
+        # if output.all_cycle_vision_hidden_states and output.all_cycle_text_hidden_states and cycle:
+        #     cycle_loss_t = [
+        #         _calculate_distillation_loss(v, k) for v, k in zip(
+        #             output.all_cycle_text_hidden_states, output.hidden_states)
+        #     ]
+        #     cycle_loss_v = [
+        #         _calculate_distillation_loss(v, k)
+        #         for v, k in zip(output.all_cycle_vision_hidden_states,
+        #                         output.vision_states)
+        #     ]
+        #     cycle_loss = (sum(cycle_loss_t) * img_tag).mean() + (
+        #         sum(cycle_loss_v) * img_tag).mean() / len(
+        #             output.all_generated_vision_hidden_states)
+        #     loss += cycle_loss * 0.001
     return loss
