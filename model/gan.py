@@ -569,7 +569,7 @@ class BertLayer(nn.Module):
 
 
 class UnimoEncoder(nn.Module):
-    def __init__(self, vision_config, text_config):
+    def __init__(self, vision_config, text_config, text_size=60, image_size=197):
         super().__init__()
         self.num_hidden_layers = 12
         self.vision_num_hidden_layers = 12
@@ -584,8 +584,8 @@ class UnimoEncoder(nn.Module):
 
         ### Multi-level Cross-modal Generation (MCG)
 
-        self.text_generator = nn.ModuleList([Generator(vision_config, 60)])
-        self.vision_generator = nn.ModuleList([Generator(text_config, 197)])
+        self.text_generator = nn.ModuleList([Generator(vision_config, text_size)])
+        self.vision_generator = nn.ModuleList([Generator(text_config, image_size)])
 
         ###Stage-refined Context Sampler (SCS)
         self.patch_selector = nn.ModuleList([ContextSampler(768) for _ in range(vision_config.num_hidden_layers)])

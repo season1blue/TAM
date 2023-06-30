@@ -14,13 +14,20 @@ log_ignore.set_verbosity_error()
 
 from model.model import GANModel
 from utils.MyDataSet import MyDataSet2
-from utils.metrics import cal_f1
 from utils.utils import set_random_seed, model_select, parse_arg, evaluate
 
 
 # parameters
 args = parse_arg()
 args.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
+from time import localtime
+import datetime
+
+def beijing(sec, what):
+    beijing_time = datetime.datetime.now() + datetime.timedelta(hours=8)
+    return beijing_time.timetuple()
+
 
 
 # 1、创建一个logger
@@ -34,6 +41,8 @@ ch = logging.StreamHandler()
 ch.setLevel(logging.DEBUG)
 # 3、定义handler的输出格式（formatter）
 formatter = logging.Formatter('%(asctime)s:  %(message)s', datefmt="%m/%d %H:%M:%S")
+logging.Formatter.converter = beijing
+
 # 4、给handler添加formatter
 fh.setFormatter(formatter)
 ch.setFormatter(formatter)
@@ -41,10 +50,6 @@ ch.setFormatter(formatter)
 logger.addHandler(fh)
 logger.addHandler(ch)
 
-
-
-if not args.enable_log :
-    logging.disable(logging.ERROR)
 
 # set random seed
 set_random_seed(args.random_seed)
@@ -67,16 +72,15 @@ test_pairs = data_inputs["test"]["pairs"]
 data_inputs["test"].pop("pairs")
 test_dataset = MyDataSet2(inputs=data_inputs["test"])
 
-train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size)
+train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size)  
+# print(t.keys()) dict_keys(['input_ids', 'attention_mask', 'labels', 'cross_labels', 'pixel_values'])
 dev_dataloader = DataLoader(dev_dataset, batch_size=args.batch_size)
 test_dataloader = DataLoader(test_dataset, batch_size=args.batch_size)
-
-
 
 text_config, image_config, text_pretrained_dict, image_pretrained_dict = model_select(args)
 
 # init DTCAModel
-vb_model = GANModel(text_config, image_config, text_num_labels=5, text_model_name=args.text_model_name,
+vb_model = GANModel(args, text_config, image_config, text_num_labels=5, text_model_name=args.text_model_name,
                      image_model_name=args.image_model_name, alpha=args.alpha, beta=args.beta)
 vb_model.to(args.device)
 vb_model_dict = vb_model.state_dict()
@@ -111,7 +115,13 @@ vb_model.zero_grad()
 epoch_start_time = time()
 step_start_time = None
 
+
+
+if not args.enable_log :
+    print("Log is forbidden !!! ")
+    logging.disable(logging.ERROR)
 logger.info("======================== New Round =============================")
+logger.info(f"{args.dataset_type}, add_gan:{args.add_gan}, add_gan_loss: {args.add_gan_loss}, add_gpt: {args.add_gpt}" )
 for epoch in range(epochs_trained, int(args.epochs)):
 
     for step, batch in tqdm(enumerate(train_dataloader), desc="Train", ncols=50, total=len(train_dataloader)):

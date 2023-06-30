@@ -8,25 +8,25 @@ import argparse
 from tqdm import tqdm
 
 from transformers import AutoTokenizer,GPT2TokenizerFast, ViTImageProcessor, VisionEncoderDecoderModel, BertModel, RobertaModel, BlipForConditionalGeneration,BlipProcessor, CLIPProcessor, AutoProcessor
-
+import csv
 
 class TrainInputProcess:
-    def __init__(self, 
-                text_model, 
-                text_model_type, 
+    def __init__(self,
+                text_model,
+                text_model_type,
                 image_model,
                 train_type,
                 dataset_type=None,
-                output_dir=None, 
+                output_dir=None,
                 finetune_task=None,
-                pretrain_task=None, 
+                pretrain_task=None,
                 pretrain_output_dir=None,
                 attention_type=None,
                 image_gen_model_type=None,
                 image_gen_text_model=None,
-                data_text_dir=None, 
-                data_image_dir=None, 
-                pretrain_data_text_dir=None, 
+                data_text_dir=None,
+                data_image_dir=None,
+                pretrain_data_text_dir=None,
                 pretrain_data_image_dir=None):
         self.text_model = text_model
         self.text_model_type = text_model_type
@@ -59,14 +59,15 @@ class TrainInputProcess:
         self.image_model = "google/vit-base-patch16-224-in21k"
         self.image_process = ViTImageProcessor.from_pretrained(self.image_model)
 
+    # ! first
     def generate_input(self):
         if self.train_type == 0:
             #  pre process
-            self.get_text_dataset()
+            self.get_text_dataset()  # ?
             if self.finetune_task == 'im2t':
                 self.generate_im2t_input()
-            elif self.finetune_task in ('clipc', 'dualc'):
-                self.generate_dualc_input()
+            elif self.finetune_task in ('clipc', 'dualc'):  # dualc
+                self.generate_dualc_input()  # ?
             else:
                 os.error("No matched task！")
                 exit()
@@ -76,7 +77,8 @@ class TrainInputProcess:
             else:
                 os.error("No matched task！")
                 exit()
-    
+
+    # ! second
     def generate_output_file(self, file_type=0):
         file_name = 'input.pt'
         # fine-tune input.pt
@@ -97,7 +99,7 @@ class TrainInputProcess:
                 os.mkdir(inputs_dir)
             pretrain_inputs_path = os.path.join(inputs_dir, file_name)
             torch.save(self.pretrain_input, pretrain_inputs_path)
-            
+
 
     def torch_mask_tokens(self, inputs: Any, special_tokens_mask: Optional[Any] = None) -> Tuple[Any, Any]:
         """
@@ -180,10 +182,10 @@ class TrainInputProcess:
                     end_pos = start_pos + len(aspect) - 1
                     text = text[:start_pos] + aspect + text[start_pos+1:]
                     sentence_d[" ".join(text)].append((start_pos,end_pos,sentiment,image_path))
-                for key,value in sentence_d.items():
+                for key, value in sentence_d.items():
                     text = key.split()
                     sentence_l.append(text)
-                    n_key =len(text)
+                    n_key = len(text)
                     s_label = [0] * n_key
                     s_pair = []
                     image_l.append(value[0][3])
@@ -193,12 +195,13 @@ class TrainInputProcess:
                             s_label[vv[0]] = v_sentiment + 1
                         else:
                             s_label[vv[0]] = v_sentiment + 2
-                        for i in range(vv[0]+1,vv[1] + 1):
+                        for i in range(vv[0] + 1, vv[1] + 1):
                             if process_label:
                                 s_label[i] = v_sentiment + 4
                             else:
                                 s_label[i] = 1
-                        s_pair.append((str(vv[0])+"-"+str(vv[1]),v_sentiment))
+                        s_pair.append(
+                            (str(vv[0]) + "-" + str(vv[1]), v_sentiment))
                     label_l.append(s_label)
                     pair_l.append(s_pair)
                 self.data_dict[dataset_type] = (sentence_l, image_l, label_l, pair_l)
@@ -306,8 +309,9 @@ class TrainInputProcess:
             self.input[dataset_type] = tokenized_inputs
 
     def generate_dualc_input(self):
+
         for dataset_type in self.dataset_types:
-            
+
             sentence_l, image_l, label_l, pair_l = self.data_dict[dataset_type]
             images = []
 
@@ -327,6 +331,28 @@ class TrainInputProcess:
             if self.finetune_task == 'clipc':
                 clip_tokenized_inputs = clip_tokenizer(new_sentence_l, truncation=True, padding='max_length', max_length=60, return_tensors='pt')
             tokenized_inputs = self.tokenizer(sentence_l, truncation=True, is_split_into_words=True, padding='max_length', max_length=60, return_tensors='pt')
+            
+            emb_path = os.path.join(self.output_dir, "dualc", self.dataset_type, dataset_type +".csv", )
+
+            emb = csv.reader(open(emb_path, "r"))
+            embeddings = []
+            for e in emb:
+                f = e
+                for i, num in enumerate(e):
+                    if type(num) == type("a"):
+                        f[i] = float(num)
+                embeddings.append(f)
+            tokenized_inputs["emb"] = torch.tensor(embeddings)
+            print(len(sentence_l))
+            print(len(embeddings))
+            print("----")
+
+            # gpt_embeddings = []
+            # for sen in sentence_l:
+            #     emb = openai.Embedding.create(input=sen, model=self.gpt_model)['data'][0]['embedding']
+            #     gpt_embeddings.append(emb)
+            # tokenized_inputs["gpt_embeddings"] = gpt_embeddings
+
             text_labels = []
             cross_labels = []
             for i, label in enumerate(label_l):
@@ -378,13 +404,13 @@ def main():
     parser.add_argument('--image_gen_text_model', type=str, default=None, nargs='?', help='display an string')
 
     # inputs output dir
-    parser.add_argument('--output_dir', type=str, default='datasets/finetune', nargs='?', help='display an string')
+    parser.add_argument('--output_dir', type=str, default='data/finetune', nargs='?', help='display an string')
 
     # used in pretraining tasks
     parser.add_argument('--pretrain_task', type=str, default='mlm', nargs='?')
-    parser.add_argument('--pretrain_output_dir', type=str, default='datasets/pretrain', nargs='?', help='display an string')
-    parser.add_argument('--pretrain_data_text_dir', type=str, default='datasets/MVSA/data', nargs='?', help='display an string')
-    parser.add_argument('--pretrain_data_image_dir', type=str, default='datasets/MVSA/data', nargs='?', help='display an string')
+    parser.add_argument('--pretrain_output_dir', type=str, default='data/pretrain', nargs='?', help='display an string')
+    parser.add_argument('--pretrain_data_text_dir', type=str, default='data/MVSA/data', nargs='?', help='display an string')
+    parser.add_argument('--pretrain_data_image_dir', type=str, default='data/MVSA/data', nargs='?', help='display an string')
 
     args = parser.parse_args()
 
@@ -434,7 +460,6 @@ def main():
     elif dataset_type == '2017':
         data_text_dir = '../data/twitter2017'
         data_image_dir = '../data/images/twitter2017_images'
-
 
     trainInputProcess = TrainInputProcess(text_model,
                                   text_model_type,

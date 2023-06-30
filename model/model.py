@@ -1,32 +1,22 @@
-# 忽略not init权重的warning提示
-from transformers import logging
-logging.set_verbosity_error()
-
 import torch.nn as nn
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torchcrf import CRF
 from torch.nn import CrossEntropyLoss
-import torchvision
-import numpy as np
-import os
 from transformers import RobertaModel, BertModel, AlbertModel, ElectraModel, ViTModel, SwinModel, DeiTModel, ConvNextModel
 
 from model.modeling_dtca import MultiHeadAttention
-from model.modeling_dtca import ScaledDotProductAttention
 from model.modeling_dtca import optimal_transport_dist
-
-from model.gan import UnimoEncoder, get_extended_attention_mask
-from model.gan import CLIPVisionEmbeddings, BertEmbeddings, BertPooler, get_head_mask
-
-from model.modeling_output import BaseModelOutputWithPooling
+from model.gan import UnimoEncoder, CLIPVisionEmbeddings, BertEmbeddings, BertPooler
 from utils.utils import cal_loss
 
 
 class GANModel(nn.Module):
-    def __init__(self, text_config, vision_config, text_num_labels, alpha, beta, text_model_name="roberta", image_model_name='vit', add_pooling_layer=True):
+    def __init__(self, args, text_config, vision_config, text_num_labels, alpha, beta, text_model_name="roberta", image_model_name='vit', add_pooling_layer=True):
         super().__init__()
+        self.args = args
+        
         if text_model_name == 'roberta':
             self.roberta = RobertaModel(text_config, add_pooling_layer=False)
         elif text_model_name == 'bert':
@@ -58,6 +48,9 @@ class GANModel(nn.Module):
         self.text_pooler = BertPooler(text_config) if add_pooling_layer else None
 
         self.encoder = UnimoEncoder(vision_config=self.vision_config, text_config=self.text_config)
+        self.emd_linear = nn.Linear(12288, 768)
+        self.text_cross = MultiHeadAttention(
+            8, text_config.hidden_size, text_config.hidden_size, text_config.hidden_size)
 
 
 
@@ -65,6 +58,7 @@ class GANModel(nn.Module):
     def forward(self,
                 input_ids=None,
                 attention_mask=None,
+                emb=None,
                 token_type_ids=None,
                 position_ids=None,
                 pixel_values=None,
@@ -76,7 +70,6 @@ class GANModel(nn.Module):
                 head_mask=None,
                 cross_labels=None,
                 return_dict=None):
-
         return_dict = return_dict if return_dict is not None else self.text_config.use_return_dict
         if self.text_model_name == 'bert':
             text_outputs = self.bert(input_ids,
@@ -99,81 +92,34 @@ class GANModel(nn.Module):
                 output_attentions=output_attentions,
                 output_hidden_states=output_hidden_states,
                 return_dict=return_dict)
-            
+
         image_outputs = self.vit(pixel_values, head_mask=head_mask)
 
         # ? 原始代码，分别使用Roberta和VIT进行编码后的hidden_state
         text_last_hidden_states = text_outputs["last_hidden_state"]  # 32, 60, 768
         image_last_hidden_states = image_outputs["last_hidden_state"]  # 32, 197, 768
-        # ! Insert Begin
 
-        # # pre vision
-        # vision_embedding_output = self.vision_embeddings(pixel_values)
-        # vision_embedding_output = self.vision_pre_layrnorm(vision_embedding_output)
+        if self.args.add_gpt:
+            # 32, 12288 > encoder
+            print("add_gpt")
+            gpt_hidden_states = self.emd_linear(emb).unsqueeze(1)  # 32, 1, 768
+            gpt_attention, _ = self.text_cross(text_last_hidden_states, gpt_hidden_states, gpt_hidden_states)
+            text_last_hidden_states = text_last_hidden_states + gpt_attention
 
-        # # pre text
-        # input_shape = input_ids.size()
-        # batch_size, seq_length = input_shape
-        # device = input_ids.device
-        # if attention_mask is None:
-        #     attention_mask = torch.ones(((batch_size, seq_length)), device=device)
 
-        # extended_attention_mask: torch.Tensor = get_extended_attention_mask(attention_mask, input_shape, device)
-        # head_mask = get_head_mask(head_mask, self.text_config.num_hidden_layers)    # [None]*12
+        if self.args.add_gan:
+            extended_attention_mask = attention_mask.unsqueeze(1).unsqueeze(1)
+            encoder_outputs = self.encoder(
+                vision_embeds=image_last_hidden_states,
+                text_embeds=text_last_hidden_states,
+                attention_mask=extended_attention_mask,
+                output_attentions=True,
+                output_hidden_states=True,
+                return_dict=return_dict,
+            )
 
-        # text_embedding_output = self.text_embeddings(input_ids=input_ids, position_ids=position_ids, token_type_ids=token_type_ids,)
-
-        # extended_attention_mask: torch.Tensor = get_extended_attention_mask(attention_mask, input_ids.size(), device)
-
-        extended_attention_mask = attention_mask.unsqueeze(1).unsqueeze(1)
-        encoder_outputs = self.encoder(
-            vision_embeds=image_last_hidden_states,
-            text_embeds=text_last_hidden_states,
-            attention_mask=extended_attention_mask,
-            output_attentions=True,
-            output_hidden_states=True,
-            return_dict=return_dict,
-        )
-
-        sequence_output = encoder_outputs[0]
-        # pooled_output = self.text_pooler(sequence_output) if self.text_pooler is not None else None
-
-        # # if not return_dict:
-        # #     return (sequence_output, pooled_output) + encoder_outputs[1:]
-
-        # output = BaseModelOutputWithPooling(
-        #     last_text_state=sequence_output,
-        #     last_vision_state=encoder_outputs.last_vision_state,
-        #     pooler_output=pooled_output,
-        #     hidden_states=encoder_outputs.hidden_states,
-        #     attentions=encoder_outputs.attentions,
-        #     all_generated_vision_hidden_states= encoder_outputs.all_generated_vision_hidden_states,
-        #     all_generated_text_hidden_states=encoder_outputs.all_generated_text_hidden_states,
-        #     vision_states= encoder_outputs.vision_states,
-        #     all_cycle_vision_hidden_states = encoder_outputs.all_cycle_vision_hidden_states,
-        #     all_cycle_text_hidden_states= encoder_outputs.all_cycle_text_hidden_states,
-        #     all_patch_policy= encoder_outputs.all_patch_policy,
-        #     all_token_policy=encoder_outputs.all_token_policy,
-        # )
-
-        # region
-        # sequence_output = output.last_hidden_state       # bsz, len, hidden
-        # sequence_output = self.dropout(sequence_output)  # bsz, len, hidden
-        # emissions = self.fc(sequence_output)             # bsz, len, labels
-
-        # logits = self.crf.decode(emissions, attention_mask.byte())
-        # loss = None
-        # if labels is not None:
-        #     loss = -1 * self.crf(emissions, labels, mask=attention_mask.byte(), reduction='mean')
-
-        # text_last_hidden_states = output.last_text_state  # 32, 60, 768
-        # image_last_hidden_states = output.last_vision_state  # 32, 1, 768
-        # endregion
-
-        text_last_hidden_states = encoder_outputs.last_text_state
-        image_last_hidden_states = encoder_outputs.last_vision_state
-        # ! Insert End
-
+            text_last_hidden_states = encoder_outputs.last_text_state
+            image_last_hidden_states = encoder_outputs.last_vision_state
 
 
         # * text only # text_loss
@@ -190,7 +136,7 @@ class GANModel(nn.Module):
         mask[:, 0] = 1
         cross_crf_loss = -self.CRF(cross_logits, cross_labels, mask=mask) / 10
 
-        # * token-patch matching # word patch align loss
+        # # * token-patch matching # word patch align loss
         batch_size, image_len, _ = image_last_hidden_states.shape
         text_pad = (attention_mask == 1).clone().detach()
         image_pad = torch.zeros(batch_size, image_len, dtype=torch.bool, device=attention_mask.device)
@@ -198,9 +144,9 @@ class GANModel(nn.Module):
         word_region_align_loss = ot_dist.mean()
 
         # TOTAL LOSS
-        loss = self.alpha * text_loss + cross_crf_loss + self.beta * word_region_align_loss   #27
-        gan_loss = cal_loss(output=encoder_outputs)  #0.5 b
-        loss += gan_loss
+        loss = self.alpha * text_loss + cross_crf_loss  + self.beta * word_region_align_loss #27
+        if self.args.add_gan_loss:
+            loss += cal_loss(args=self.args, output=encoder_outputs)  #0.5 b
 
         # if 0 < loss.item() < 100000  :
         #     pass
