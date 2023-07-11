@@ -12,6 +12,7 @@ import torchvision
 import numpy as np
 import os
 from transformers import RobertaModel, BertModel, AlbertModel, ElectraModel, ViTModel, SwinModel, DeiTModel, ConvNextModel
+from transformers import T5EncoderModel, T5ForConditionalGeneration
 
 from model.modeling_dtca import MultiHeadAttention
 from model.modeling_dtca import ScaledDotProductAttention
@@ -45,6 +46,8 @@ class GANModel(nn.Module):
             self.roberta = RobertaModel(text_config, add_pooling_layer=False)
         elif text_model_name == 'bert':
             self.bert = BertModel(text_config, add_pooling_layer=False)
+        elif text_model_name == 'flant5':
+            self.flant5 = T5ForConditionalGeneration(text_config)
         self.vit = ViTModel(vision_config)
 
         self.alpha = alpha
@@ -122,8 +125,15 @@ class GANModel(nn.Module):
         image_last_hidden_states = image_outputs["last_hidden_state"]  # 32, 197, 768
         # image_last_hidden_states = image_feature.float()
         
-
-        if self.args.add_llm:
+        if self.text_model_name == "flant5":
+            text_outputs = self.flant5(input_ids, attention_mask=attention_mask, output_attentions=output_attentions, output_hidden_states=output_hidden_states, return_dict=return_dict)
+            text_last_hidden_states = text_outputs["last_hidden_state"]
+        elif self.text_model_name == "roberta":
+            text_outputs = self.roberta(input_ids, attention_mask=attention_mask, token_type_ids=token_type_ids, position_ids=position_ids, head_mask=head_mask, inputs_embeds=inputs_embeds, output_attentions=output_attentions, output_hidden_states=output_hidden_states, return_dict=return_dict)
+            text_last_hidden_states = text_outputs["last_hidden_state"]  # 32, 60, 768
+            # text_last_hidden_states = text_feature.float()
+            # text_last_hidden_states = self.roberta_linear(text_last_hidden_states)
+        elif self.text_model_name == "llama":
             llm_feature = text_hidden_feature.float()
             llm_feature = nn.functional.normalize(llm_feature, dim=-1)
             llm_feature = self.llm_linear(llm_feature)
@@ -134,11 +144,8 @@ class GANModel(nn.Module):
             attention_feature, _ = self.llm_roberta_cross(roberta_feature, llm_feature, llm_feature)
             text_last_hidden_states = roberta_feature + attention_feature
             text_last_hidden_states = self.roberta_linear(text_last_hidden_states)
-        else:
-            text_outputs = self.roberta(input_ids, attention_mask=attention_mask, token_type_ids=token_type_ids, position_ids=position_ids, head_mask=head_mask, inputs_embeds=inputs_embeds, output_attentions=output_attentions, output_hidden_states=output_hidden_states, return_dict=return_dict)
-            text_last_hidden_states = text_outputs["last_hidden_state"]  # 32, 60, 768
-            # text_last_hidden_states = text_feature.float()
-            # text_last_hidden_states = self.roberta_linear(text_last_hidden_states)
+            
+        
 
 
         # ! Insert Begin

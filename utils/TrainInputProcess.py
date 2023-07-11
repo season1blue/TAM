@@ -65,6 +65,10 @@ class TrainInputProcess:
             self.tokenizer.add_special_tokens({'pad_token': '[PAD]'})
         elif self.text_model_type == 'roberta':
             self.tokenizer = AutoTokenizer.from_pretrained(self.text_model, add_prefix_space=True)
+        elif self.text_model_type == 'flant5':
+            self.tokenizer = AutoTokenizer.from_pretrained("./data/models/flant5")
+
+
 
         self.image_model = "google/vit-base-patch16-224-in21k"
         self.image_process = ViTImageProcessor.from_pretrained(self.image_model)
@@ -102,7 +106,8 @@ class TrainInputProcess:
                 exit()
 
     def generate_output_file(self, file_type=0):
-        file_name = 'input_roberta.pt'
+        file_name = 'input_' + self.text_model_type + '.pt'
+        print(file_name)
         # fine-tune input.pt
         if file_type == 0:
             inputs_dir = None
@@ -354,22 +359,12 @@ class TrainInputProcess:
                 new_sentence_l.append(" ".join(sentence))
             if self.finetune_task == 'clipc':
                 clip_tokenized_inputs = clip_tokenizer(new_sentence_l, truncation=True, padding='max_length', max_length=60, return_tensors='pt')
+
             tokenized_inputs = self.tokenizer(sentence_l, truncation=True, is_split_into_words=True, padding='max_length', max_length=60, return_tensors='pt')
 
             if self.add_llm:
                 llm_tokenized_inputs = self.llm_tokenizer(sentence_l, truncation=True, is_split_into_words=True, padding='max_length', max_length=60, return_tensors='pt')
 
-            # llm_tokenized_inputs = self.llm_tokenizer(sentence_l, truncation=True, max_length=60, padding='max_length', return_tensors='pt')
-            # llm_token_list, llm_mask_list = [], []
-            # for sen in tqdm(sentence_l, desc="llm"):
-            #     sen_tokenized = self.llm_tokenizer(sen, truncation=True, max_length=60, padding='max_length', return_tensors='pt')
-            #     llm_input_ids = sen_tokenized["input_ids"].cuda().unsqueeze(0)
-            #     llm_mask = sen_tokenized["attention_mask"].cuda().unsqueeze(0)
-            #     llm_token_list.append(sen_tokenized)
-            #     llm_mask_list.append(llm_mask)
-            
-            # llm_tokenized_inputs = torch.cat(llm_token_list, dim=0)
-            # llm_tokenized_mask = torch.cat(llm_mask_list, dim=0)
 
             text_labels = []
             cross_labels = []
@@ -400,6 +395,7 @@ class TrainInputProcess:
             if self.finetune_task == 'clipc':
                 tokenized_inputs["clip_input_ids"] = clip_tokenized_inputs["input_ids"]
             self.input[dataset_type] = tokenized_inputs
+
 
             if self.add_llm:
                 tokenized_inputs["llm_ids"] = llm_tokenized_inputs["input_ids"]
@@ -525,6 +521,8 @@ def main():
         text_model = 'models/bert-base-uncased'
     elif text_model_type == 'roberta':
         text_model = 'roberta-base'
+    elif text_model_type == "flant5":
+        text_model = 'flant5'
 
     if image_model_type == 'vit':
         image_model = 'vit-base-patch16-224-in21k'
@@ -567,7 +565,7 @@ def main():
                                   pretrain_data_text_dir=pretrain_data_text_dir,
                                   pretrain_data_image_dir=pretrain_data_image_dir)
     trainInputProcess.generate_input()
-    trainInputProcess.encode_input()
+    # trainInputProcess.encode_input()
     trainInputProcess.generate_output_file()
 
 

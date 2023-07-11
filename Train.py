@@ -45,10 +45,13 @@ logger.addHandler(ch)
 
 # set random seed
 set_random_seed(args.random_seed)
-if args.add_llm:
-    data_input_file = os.path.join("data/finetune", args.task_name, args.dataset_type, "input_llama.pt")
-else:
-    data_input_file = os.path.join("data/finetune", args.task_name, args.dataset_type, "input_roberta.pt")
+file_name = 'input_' + args.text_model_name + '.pt'
+print(file_name)
+data_input_file = os.path.join("data/finetune", args.task_name, args.dataset_type, file_name)
+# if args.add_llm:
+#     data_input_file = os.path.join("data/finetune", args.task_name, args.dataset_type, "input_llama.pt")
+# else:
+#     data_input_file = os.path.join("data/finetune", args.task_name, args.dataset_type, "input_roberta.pt")
 data_inputs = torch.load(data_input_file)
 
 train_word_ids = data_inputs["train"].word_ids
@@ -119,7 +122,7 @@ if not args.enable_log :
     print("Log is forbidden !!! ")
     logging.disable(logging.ERROR)
 logger.info("======================== New Round =============================")
-logger.info(f"{args.dataset_type}, add_gan:{args.add_gan}, add_gan_loss: {args.add_gan_loss}, add_gpt: {args.add_gpt}" )
+logger.info(f"{args.dataset_type}, add_gan:{args.add_gan}, add_gan_loss: {args.add_gan_loss}, add_gpt: {args.add_gpt}, text_model {args.text_model_name}")
 
 for epoch in range(epochs_trained, int(args.epochs)):
 

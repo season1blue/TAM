@@ -9,6 +9,8 @@ from tqdm import tqdm
 from transformers.models.auto.modeling_auto import MODEL_MAPPING
 from transformers import (WEIGHTS_NAME, AutoConfig)
 from transformers import BertForTokenClassification, RobertaForTokenClassification, AlbertForTokenClassification, ViTForImageClassification, SwinForImageClassification, DeiTModel, ConvNextForImageClassification
+from transformers import T5ForConditionalGeneration, T5EncoderModel
+
 import ot
 import torch.nn.functional as F
 
@@ -84,6 +86,12 @@ def model_select(args):
         text_config = AutoConfig.from_pretrained(model_path1)
         text_pretrained_dict = AlbertForTokenClassification.from_pretrained(
             model_path1).state_dict()
+    elif args.text_model_name == 'flant5':
+        model_path1 = './data/models/flant5'
+        text_config = AutoConfig.from_pretrained(model_path1)
+        text_pretrained_dict = T5ForConditionalGeneration.from_pretrained(
+            model_path1).state_dict()
+
     else:
         os.error("出错了")
         exit()
