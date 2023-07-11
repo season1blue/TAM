@@ -2,7 +2,6 @@ import os
 import numpy as np
 import torch
 from torch.utils.data import DataLoader, RandomSampler, DistributedSampler, SequentialSampler
-from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 from transformers.models.auto.modeling_auto import MODEL_MAPPING
 from transformers import (WEIGHTS_NAME, AdamW, get_linear_schedule_with_warmup)
@@ -15,8 +14,10 @@ log_ignore.set_verbosity_error()
 from model.model import GANModel
 from utils.MyDataSet import MyDataSet2
 from utils.metrics import cal_f1
-from utils.utils import set_random_seed, model_select, parse_arg, evaluate
+from utils.utils import set_random_seed, model_select, parse_arg
+from utils.evaluate import evaluate
 
+# docker run -it --init --gpus=all  --name sa -v /media/seasonubt/data/Research/EA/:/workspace cuda118 /bin/bash
 
 # parameters
 args = parse_arg()
@@ -44,8 +45,10 @@ logger.addHandler(ch)
 
 # set random seed
 set_random_seed(args.random_seed)
-
-data_input_file = os.path.join("data/finetune", args.task_name, args.dataset_type, "input.pt")
+if args.add_llm:
+    data_input_file = os.path.join("data/finetune", args.task_name, args.dataset_type, "input_llama.pt")
+else:
+    data_input_file = os.path.join("data/finetune", args.task_name, args.dataset_type, "input_roberta.pt")
 data_inputs = torch.load(data_input_file)
 
 train_word_ids = data_inputs["train"].word_ids
@@ -71,9 +74,9 @@ test_dataloader = DataLoader(test_dataset, batch_size=args.batch_size)
 
 text_config, image_config, text_pretrained_dict, image_pretrained_dict = model_select(args)
 
-# init DTCAModel
 vb_model = GANModel(args, text_config, image_config, text_num_labels=5, text_model_name=args.text_model_name,
                      image_model_name=args.image_model_name, alpha=args.alpha, beta=args.beta)
+
 vb_model.to(args.device)
 vb_model_dict = vb_model.state_dict()
 
@@ -85,6 +88,11 @@ for k, v in text_pretrained_dict.items():
     if vb_model_dict.get(k) is not None and k not in {'classifier.bias', 'classifier.weight'}:
         vb_model_dict[k] = v
 vb_model.load_state_dict(vb_model_dict)
+
+
+
+
+
 
 
 t_total = len(train_dataloader) * args.epochs
@@ -117,7 +125,6 @@ for epoch in range(epochs_trained, int(args.epochs)):
 
     for step, batch in tqdm(enumerate(train_dataloader), desc="Train", ncols=50, total=len(train_dataloader)):
         vb_model.train()
-
         for k in batch:
             if isinstance(batch[k], torch.Tensor):
                 batch[k] = batch[k].to(args.device)  #['input_ids', 'attention_mask', 'labels', 'cross_labels', 'pixel_values'
@@ -125,8 +132,9 @@ for epoch in range(epochs_trained, int(args.epochs)):
         # with torch.autograd.detect_anomaly():
         outputs = vb_model(**batch)
         loss = outputs["loss"]
-
+        
         if not torch.any(torch.isnan(loss)):
+            
             loss.backward()
             # tr_loss += loss.item()
 
@@ -158,7 +166,7 @@ for epoch in range(epochs_trained, int(args.epochs)):
             if args.save_steps > 0 and global_step % args.save_steps == 0:
                 # Log metrics
                 results, _ = evaluate(args, vb_model, test_dataloader, data_inputs["test"], test_pairs)
-                if results["f1"] > best_result["f1"]:
+                if results["f1"] >= best_result["f1"]:
                     best_result = results
                     best_result["epoch"] = epoch
                 print()
@@ -172,11 +180,11 @@ for epoch in range(epochs_trained, int(args.epochs)):
                 # tb_writer.add_scalar("lr", scheduler.get_last_lr()[0], global_step)
                 # tb_writer.add_scalar("loss", (tr_loss - logging_loss) / args.logging_steps, global_step)
 
-        if 0 < args.max_steps < global_step:
-            break
+    #     if 0 < args.max_steps < global_step:
+    #         break
 
-    if 0 < args.max_steps < global_step:
-        break
+    # if 0 < args.max_steps < global_step:
+    #     break
 
 
 

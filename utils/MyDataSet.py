@@ -62,3 +62,20 @@ class MyDataSet2(Dataset):
 
     def __len__(self):
         return len(self.inputs["input_ids"])
+
+class llmDataset(Dataset):
+    def __init__(self, inputs):
+        """
+        dataset_type: ['train', 'dev', 'test']
+        """
+        self.inputs = inputs
+
+    def __getitem__(self, index):
+        d = dict()
+        for key in self.inputs.keys():
+            d[key] = self.inputs[key][index]
+        return d
+
+
+    def __len__(self):
+        return len(self.inputs["llm_ids"])

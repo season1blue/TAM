@@ -6,27 +6,37 @@ import collections
 from PIL import Image,ImageFile
 import argparse
 from tqdm import tqdm
+import torch.nn as nn
+
 
 from transformers import AutoTokenizer,GPT2TokenizerFast, ViTImageProcessor, VisionEncoderDecoderModel, BertModel, RobertaModel, BlipForConditionalGeneration,BlipProcessor, CLIPProcessor, AutoProcessor
+from loadLLM import loadLLM
+from transformers import RobertaModel, BertModel, AlbertModel, ElectraModel, ViTModel, SwinModel, DeiTModel, ConvNextModel
+from transformers import (WEIGHTS_NAME, AutoConfig)
+from transformers import BertForTokenClassification, RobertaForTokenClassification, AlbertForTokenClassification, ViTForImageClassification, SwinForImageClassification, DeiTModel, ConvNextForImageClassification
 
+# from utils import set_random_seed, model_select, parse_arg, 
+
+from MyDataSet import MyDataSet2, llmDataset
+from torch.utils.data import DataLoader
 
 class TrainInputProcess:
-    def __init__(self, 
-                text_model, 
-                text_model_type, 
-                image_model,
-                train_type,
+    def __init__(self,
+                text_model=None,
+                text_model_type="roberta",
+                image_model=None,
+                train_type=None,
                 dataset_type=None,
-                output_dir=None, 
+                output_dir=None,
                 finetune_task=None,
-                pretrain_task=None, 
+                pretrain_task=None,
                 pretrain_output_dir=None,
                 attention_type=None,
                 image_gen_model_type=None,
                 image_gen_text_model=None,
-                data_text_dir=None, 
-                data_image_dir=None, 
-                pretrain_data_text_dir=None, 
+                data_text_dir=None,
+                data_image_dir=None,
+                pretrain_data_text_dir=None,
                 pretrain_data_image_dir=None):
         self.text_model = text_model
         self.text_model_type = text_model_type
@@ -59,6 +69,20 @@ class TrainInputProcess:
         self.image_model = "google/vit-base-patch16-224-in21k"
         self.image_process = ViTImageProcessor.from_pretrained(self.image_model)
 
+        self.add_llm = False
+        if self.add_llm:
+            llm_model, llm_tokenizer = loadLLM()
+            self.llm_model = nn.DataParallel(llm_model)
+            self.llm_tokenizer = llm_tokenizer
+            self.llm_model.cuda()
+
+        text_config = AutoConfig.from_pretrained("./data/models/roberta-base")
+        image_config = AutoConfig.from_pretrained("./data/models/vit-base-patch16-224-in21k")
+        self.roberta = RobertaModel(text_config, add_pooling_layer=False)
+        self.roberta.cuda()
+        self.vit = ViTModel(image_config)
+        self.vit.cuda()
+
     def generate_input(self):
         if self.train_type == 0:
             #  pre process
@@ -76,9 +100,9 @@ class TrainInputProcess:
             else:
                 os.error("No matched task！")
                 exit()
-    
+
     def generate_output_file(self, file_type=0):
-        file_name = 'input.pt'
+        file_name = 'input_roberta.pt'
         # fine-tune input.pt
         if file_type == 0:
             inputs_dir = None
@@ -97,7 +121,7 @@ class TrainInputProcess:
                 os.mkdir(inputs_dir)
             pretrain_inputs_path = os.path.join(inputs_dir, file_name)
             torch.save(self.pretrain_input, pretrain_inputs_path)
-            
+
 
     def torch_mask_tokens(self, inputs: Any, special_tokens_mask: Optional[Any] = None) -> Tuple[Any, Any]:
         """
@@ -151,10 +175,10 @@ class TrainInputProcess:
         inputs = self.tokenizer(sentence_l, truncation=True, is_split_into_words=True,
                                      padding='max_length', max_length=60, return_tensors='pt')
         image_inputs=self.feature_extractor(images, return_tensors="pt")
-        inputs["input_ids"],labels = self.torch_mask_tokens(inputs["input_ids"])
+        inputs["input_ids"], labels = self.torch_mask_tokens(inputs["input_ids"])
         inputs["pixel_values"] = image_inputs["pixel_values"]
         inputs["attention_mask"] = torch.cat((inputs["attention_mask"], torch.ones(len(sentence_l), 197)), 1)
-        inputs["labels"] = torch.cat((labels,torch.ones(len(sentence_l),197)*(-100)),1).long()
+        inputs["labels"] = torch.cat((labels, torch.ones(len(sentence_l), 197) * (-100)), 1).long()
         self.pretrain_input = inputs
 
     # process fine-tune text
@@ -181,6 +205,7 @@ class TrainInputProcess:
                     text = text[:start_pos] + aspect + text[start_pos+1:]
                     sentence_d[" ".join(text)].append((start_pos,end_pos,sentiment,image_path))
                 for key,value in sentence_d.items():
+                    # print(key)
                     text = key.split()
                     sentence_l.append(text)
                     n_key =len(text)
@@ -188,17 +213,20 @@ class TrainInputProcess:
                     s_pair = []
                     image_l.append(value[0][3])
                     for vv in value:
+                        # print("-----")
+                        # print(vv)
                         v_sentiment = int(vv[2]) + 1
+                        # print(v_sentiment)
                         if process_label:
                             s_label[vv[0]] = v_sentiment + 1
                         else:
                             s_label[vv[0]] = v_sentiment + 2
-                        for i in range(vv[0]+1,vv[1] + 1):
+                        for i in range(vv[0] + 1, vv[1] + 1):
                             if process_label:
                                 s_label[i] = v_sentiment + 4
                             else:
                                 s_label[i] = 1
-                        s_pair.append((str(vv[0])+"-"+str(vv[1]),v_sentiment))
+                        s_pair.append((str(vv[0]) + "-" + str(vv[1]), v_sentiment))
                     label_l.append(s_label)
                     pair_l.append(s_pair)
                 self.data_dict[dataset_type] = (sentence_l, image_l, label_l, pair_l)
@@ -307,11 +335,11 @@ class TrainInputProcess:
 
     def generate_dualc_input(self):
         for dataset_type in self.dataset_types:
-            
+
             sentence_l, image_l, label_l, pair_l = self.data_dict[dataset_type]
             images = []
 
-            for image_path in tqdm(image_l):
+            for image_path in tqdm(image_l, desc="image"):
                 image_file_path = os.path.join(self.data_image_dir, image_path)
                 image = Image.open(image_file_path)
                 image = image.convert('RGB')
@@ -327,6 +355,22 @@ class TrainInputProcess:
             if self.finetune_task == 'clipc':
                 clip_tokenized_inputs = clip_tokenizer(new_sentence_l, truncation=True, padding='max_length', max_length=60, return_tensors='pt')
             tokenized_inputs = self.tokenizer(sentence_l, truncation=True, is_split_into_words=True, padding='max_length', max_length=60, return_tensors='pt')
+
+            if self.add_llm:
+                llm_tokenized_inputs = self.llm_tokenizer(sentence_l, truncation=True, is_split_into_words=True, padding='max_length', max_length=60, return_tensors='pt')
+
+            # llm_tokenized_inputs = self.llm_tokenizer(sentence_l, truncation=True, max_length=60, padding='max_length', return_tensors='pt')
+            # llm_token_list, llm_mask_list = [], []
+            # for sen in tqdm(sentence_l, desc="llm"):
+            #     sen_tokenized = self.llm_tokenizer(sen, truncation=True, max_length=60, padding='max_length', return_tensors='pt')
+            #     llm_input_ids = sen_tokenized["input_ids"].cuda().unsqueeze(0)
+            #     llm_mask = sen_tokenized["attention_mask"].cuda().unsqueeze(0)
+            #     llm_token_list.append(sen_tokenized)
+            #     llm_mask_list.append(llm_mask)
+            
+            # llm_tokenized_inputs = torch.cat(llm_token_list, dim=0)
+            # llm_tokenized_mask = torch.cat(llm_mask_list, dim=0)
+
             text_labels = []
             cross_labels = []
             for i, label in enumerate(label_l):
@@ -356,6 +400,76 @@ class TrainInputProcess:
             if self.finetune_task == 'clipc':
                 tokenized_inputs["clip_input_ids"] = clip_tokenized_inputs["input_ids"]
             self.input[dataset_type] = tokenized_inputs
+
+            if self.add_llm:
+                tokenized_inputs["llm_ids"] = llm_tokenized_inputs["input_ids"]
+                tokenized_inputs["llm_mask"] = llm_tokenized_inputs["attention_mask"]
+
+    def encode_input_llm(self):
+        with torch.no_grad():
+            for dataset_type in self.dataset_types:
+                print(f"model encode on {dataset_type} datset")
+                curr_dataset = llmDataset(inputs = self.input[dataset_type])
+                curr_dataloader = DataLoader(curr_dataset, batch_size = 1)
+
+                image_feature = []
+                text_logits_feature, text_hidden_feature = [], []
+                for batch in tqdm(curr_dataloader, desc="model encode"):
+                    llm_ids = batch["llm_ids"].cuda()  # 1,60
+                    pixel_values = batch["pixel_values"].cuda()
+
+                    if hasattr(torch.cuda, 'empty_cache'):
+                        torch.cuda.empty_cache()
+                    text_outputs = self.llm_model(llm_ids)
+                    text_logits_feature.append(text_outputs["logits"].cpu()) # 1, 60, 32000
+                    # print(text_outputs["hidden_states"][-1].size())
+                    text_hidden_feature.append(text_outputs["hidden_states"][-1].cpu())
+
+                    image_outputs = self.vit(pixel_values)
+                    image_feature.append(image_outputs["last_hidden_state"])
+
+                text_logits_feature = torch.cat(text_logits_feature, dim=0)
+                text_hidden_feature = torch.cat(text_hidden_feature, dim=0)
+                image_feature = torch.cat(image_feature, dim=0)
+
+                print(text_logits_feature.size())
+                print(text_hidden_feature.size())
+                print(image_feature)
+
+                self.input[dataset_type]["text_logits_feature"] = text_logits_feature
+                self.input[dataset_type]["text_hidden_feature"] = text_hidden_feature
+                self.input[dataset_type]["image_feature"] = image_feature
+
+    def encode_input(self):
+        with torch.no_grad():
+            for dataset_type in self.dataset_types:
+                print(f"model encode on {dataset_type} datset")
+                curr_dataset = MyDataSet2(inputs = self.input[dataset_type])
+                curr_dataloader = DataLoader(curr_dataset, batch_size = 1)
+
+                image_feature, text_feature = [], []
+                for batch in tqdm(curr_dataloader, desc="model encode"):
+                    input_ids = batch["input_ids"].cuda()
+                    attention_mask = batch["attention_mask"].cuda()
+                    pixel_values = batch["pixel_values"].cuda()
+
+                    text_outputs = self.roberta(input_ids, attention_mask=attention_mask, output_attentions=True, output_hidden_states=True, return_dict=True)
+                    image_outputs = self.vit(pixel_values)
+
+                    text_feature.append(text_outputs["last_hidden_state"].cpu())
+                    image_feature.append(image_outputs["last_hidden_state"].cpu())
+
+                text_feature = torch.cat(text_feature, dim=0)
+                image_feature = torch.cat(image_feature, dim=0)
+
+                print(text_feature.size())
+                print(image_feature.size())
+
+                self.input[dataset_type]["text_feature"] = text_feature
+                self.input[dataset_type]["image_feature"] = image_feature
+
+
+
 
 
 def main():
@@ -453,6 +567,7 @@ def main():
                                   pretrain_data_text_dir=pretrain_data_text_dir,
                                   pretrain_data_image_dir=pretrain_data_image_dir)
     trainInputProcess.generate_input()
+    trainInputProcess.encode_input()
     trainInputProcess.generate_output_file()
 
 

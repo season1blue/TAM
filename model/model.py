@@ -23,9 +23,23 @@ from model.gan import CLIPVisionEmbeddings, BertEmbeddings, BertPooler, get_head
 from model.modeling_output import BaseModelOutputWithPooling
 from utils.utils import cal_loss
 
+import faulthandler
+# 在import之后直接添加以下启用代码即可
+faulthandler.enable()
+# 后边正常写你的代码
 
 class GANModel(nn.Module):
-    def __init__(self, args, text_config, vision_config, text_num_labels, alpha, beta, text_model_name="roberta", image_model_name='vit', add_pooling_layer=True):
+
+    def __init__(self,
+                 args,
+                 text_config,
+                 vision_config,
+                 text_num_labels,
+                 alpha,
+                 beta,
+                 text_model_name="roberta",
+                 image_model_name='vit',
+                 add_pooling_layer=True):
         super().__init__()
         if text_model_name == 'roberta':
             self.roberta = RobertaModel(text_config, add_pooling_layer=False)
@@ -59,6 +73,24 @@ class GANModel(nn.Module):
 
         self.encoder = UnimoEncoder(vision_config=self.vision_config, text_config=self.text_config)
         self.args = args
+        
+        # if self.args.add_llm:
+        #     self.llm_model = llm_model.eval()
+        self.llm_roberta_cross = MultiHeadAttention(
+            8, text_config.hidden_size, text_config.hidden_size, text_config.hidden_size)
+
+        self.llm_linear = nn.Linear(4096, 768)
+        self.roberta_linear = nn.Linear(768, 768)
+        # self.llm_linear2 = nn.Linear(10000, 768)
+        # self.llm_linear= nn.Sequential(
+        #     nn.Linear(32000, 4096),
+        #     nn.Linear(4096, 2048),
+        #     nn.Linear(2048, 768)
+        # )
+
+        self.llm_pre_laynorm = nn.LayerNorm(32000)
+        self.llm_post_laynorm = nn.LayerNorm(768)
+        
 
 
 
@@ -66,6 +98,12 @@ class GANModel(nn.Module):
     def forward(self,
                 input_ids=None,
                 attention_mask=None,
+                text_feature=None,
+                llm_ids=None,
+                llm_mask=None,
+                text_logits_feature=None,
+                text_hidden_feature=None,
+                image_feature=None,
                 token_type_ids=None,
                 position_ids=None,
                 pixel_values=None,
@@ -79,35 +117,31 @@ class GANModel(nn.Module):
                 return_dict=None):
 
         return_dict = return_dict if return_dict is not None else self.text_config.use_return_dict
-        if self.text_model_name == 'bert':
-            text_outputs = self.bert(input_ids,
-                                     attention_mask=attention_mask,
-                                     token_type_ids=token_type_ids,
-                                     position_ids=position_ids,
-                                     head_mask=head_mask,
-                                     inputs_embeds=inputs_embeds,
-                                     output_attentions=output_attentions,
-                                     output_hidden_states=output_hidden_states,
-                                     return_dict=return_dict)
-        elif self.text_model_name == 'roberta':
-            text_outputs = self.roberta(
-                input_ids,
-                attention_mask=attention_mask,
-                token_type_ids=token_type_ids,
-                position_ids=position_ids,
-                head_mask=head_mask,
-                inputs_embeds=inputs_embeds,
-                output_attentions=output_attentions,
-                output_hidden_states=output_hidden_states,
-                return_dict=return_dict)
-            
+
         image_outputs = self.vit(pixel_values, head_mask=head_mask)
-
-        # ? 原始代码，分别使用Roberta和VIT进行编码后的hidden_state
-        text_last_hidden_states = text_outputs["last_hidden_state"]  # 32, 60, 768
         image_last_hidden_states = image_outputs["last_hidden_state"]  # 32, 197, 768
-        # ! Insert Begin
+        # image_last_hidden_states = image_feature.float()
+        
 
+        if self.args.add_llm:
+            llm_feature = text_hidden_feature.float()
+            llm_feature = nn.functional.normalize(llm_feature, dim=-1)
+            llm_feature = self.llm_linear(llm_feature)
+
+            roberta_feature = self.roberta(input_ids, attention_mask=attention_mask, token_type_ids=token_type_ids, position_ids=position_ids, head_mask=head_mask, inputs_embeds=inputs_embeds, output_attentions=output_attentions, output_hidden_states=output_hidden_states, return_dict=return_dict)
+            roberta_feature = roberta_feature["last_hidden_state"]
+
+            attention_feature, _ = self.llm_roberta_cross(roberta_feature, llm_feature, llm_feature)
+            text_last_hidden_states = roberta_feature + attention_feature
+            text_last_hidden_states = self.roberta_linear(text_last_hidden_states)
+        else:
+            text_outputs = self.roberta(input_ids, attention_mask=attention_mask, token_type_ids=token_type_ids, position_ids=position_ids, head_mask=head_mask, inputs_embeds=inputs_embeds, output_attentions=output_attentions, output_hidden_states=output_hidden_states, return_dict=return_dict)
+            text_last_hidden_states = text_outputs["last_hidden_state"]  # 32, 60, 768
+            # text_last_hidden_states = text_feature.float()
+            # text_last_hidden_states = self.roberta_linear(text_last_hidden_states)
+
+
+        # ! Insert Begin
         # # pre vision
         # vision_embedding_output = self.vision_embeddings(pixel_values)
         # vision_embedding_output = self.vision_pre_layrnorm(vision_embedding_output)
@@ -173,7 +207,7 @@ class GANModel(nn.Module):
         # image_last_hidden_states = output.last_vision_state  # 32, 1, 768
         # endregion
 
-            
+
         # ! Insert End
 
 
@@ -201,6 +235,7 @@ class GANModel(nn.Module):
 
         # TOTAL LOSS
         loss = self.alpha * text_loss + cross_crf_loss + self.beta * word_region_align_loss   #27
+   
         if self.args.add_gan_loss:
             loss += cal_loss(output=encoder_outputs)
 
@@ -214,4 +249,6 @@ class GANModel(nn.Module):
 
         # loss = self.alpha * text_loss + cross_crf_loss + self.beta * word_region_align_loss
         # end train
+
         return {"loss": loss, "logits": text_token_logits, "cross_logits": cross_logits, }
+        # text_token_logits         4, 60, 5
