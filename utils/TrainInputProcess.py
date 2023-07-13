@@ -15,6 +15,7 @@ from transformers import RobertaModel, BertModel, AlbertModel, ElectraModel, ViT
 from transformers import (WEIGHTS_NAME, AutoConfig)
 from transformers import BertForTokenClassification, RobertaForTokenClassification, AlbertForTokenClassification, ViTForImageClassification, SwinForImageClassification, DeiTModel, ConvNextForImageClassification
 
+
 # from utils import set_random_seed, model_select, parse_arg, 
 
 from MyDataSet import MyDataSet2, llmDataset
@@ -22,7 +23,6 @@ from torch.utils.data import DataLoader
 
 class TrainInputProcess:
     def __init__(self,
-                text_model=None,
                 text_model_type="roberta",
                 image_model=None,
                 train_type=None,
@@ -38,7 +38,6 @@ class TrainInputProcess:
                 data_image_dir=None,
                 pretrain_data_text_dir=None,
                 pretrain_data_image_dir=None):
-        self.text_model = text_model
         self.text_model_type = text_model_type
         self.image_model = image_model
         self.train_type = train_type
@@ -61,13 +60,25 @@ class TrainInputProcess:
         self.input = dict()
         self.pretrain_input= None
         if self.text_model_type == 'bert':
-            self.tokenizer = AutoTokenizer.from_pretrained(self.text_model)
+            self.tokenizer = AutoTokenizer.from_pretrained("./data/models/bert-base-uncased")
             self.tokenizer.add_special_tokens({'pad_token': '[PAD]'})
         elif self.text_model_type == 'roberta':
-            self.tokenizer = AutoTokenizer.from_pretrained(self.text_model, add_prefix_space=True)
+            self.tokenizer = AutoTokenizer.from_pretrained("./data/models/roberta-base", add_prefix_space=True)
         elif self.text_model_type == 'flant5':
             self.tokenizer = AutoTokenizer.from_pretrained("./data/models/flant5")
-
+        elif self.text_model_type == 'bloom':
+            self.tokenizer = AutoTokenizer.from_pretrained("./data/models/bloom", add_prefix_space=True)
+        elif self.text_model_type == "deberta":
+            # self.tokenizer = AutoTokenizer.from_pretrained("./data/models/deberta", add_prefix_space=True)
+            self.tokenizer = AutoTokenizer.from_pretrained("microsoft/deberta-base", add_prefix_space=True)
+        elif self.text_model_type == "distilbert":
+            self.tokenizer = AutoTokenizer.from_pretrained("distilbert-base-uncased", add_prefix_space=True)
+        elif self.text_model_type == "gptneo":
+            self.tokenizer = AutoTokenizer.from_pretrained("EleutherAI/gpt-neo-1.3B", add_prefix_space=True)
+            self.tokenizer.add_special_tokens({'pad_token': '[PAD]'})
+        elif self.text_model_type == "gpt2":
+            self.tokenizer = AutoTokenizer.from_pretrained("./data/models/gpt2", add_prefix_space=True)
+            self.tokenizer.add_special_tokens({'pad_token': '[PAD]'})
 
 
         self.image_model = "google/vit-base-patch16-224-in21k"
@@ -360,6 +371,9 @@ class TrainInputProcess:
             if self.finetune_task == 'clipc':
                 clip_tokenized_inputs = clip_tokenizer(new_sentence_l, truncation=True, padding='max_length', max_length=60, return_tensors='pt')
 
+            # if self.text_model_type == "gpt2":
+            #     tokenized_inputs = self.tokenizer(sentence_l, truncation=True, padding='max_length', max_length=60, return_tensors='pt')
+            # else:
             tokenized_inputs = self.tokenizer(sentence_l, truncation=True, is_split_into_words=True, padding='max_length', max_length=60, return_tensors='pt')
 
             if self.add_llm:
@@ -517,12 +531,12 @@ def main():
     pretrain_data_image_dir = args.pretrain_data_image_dir
 
 
-    if text_model_type == 'bert':
-        text_model = 'models/bert-base-uncased'
-    elif text_model_type == 'roberta':
-        text_model = 'roberta-base'
-    elif text_model_type == "flant5":
-        text_model = 'flant5'
+    # if text_model_type == 'bert':
+    #     text_model = 'models/bert-base-uncased'
+    # elif text_model_type == 'roberta':
+    #     text_model = 'roberta-base'
+    # elif text_model_type == "flant5":
+    #     text_model = 'flant5'
 
     if image_model_type == 'vit':
         image_model = 'vit-base-patch16-224-in21k'
@@ -548,7 +562,7 @@ def main():
         data_image_dir = '../data/images/twitter2017_images'
 
 
-    trainInputProcess = TrainInputProcess(text_model,
+    trainInputProcess = TrainInputProcess(
                                   text_model_type,
                                   image_model,
                                   train_type,

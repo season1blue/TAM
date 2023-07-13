@@ -21,6 +21,7 @@ from utils.evaluate import evaluate
 
 # parameters
 args = parse_arg()
+os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
 args.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 

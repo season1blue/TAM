@@ -9,7 +9,8 @@ from tqdm import tqdm
 from transformers.models.auto.modeling_auto import MODEL_MAPPING
 from transformers import (WEIGHTS_NAME, AutoConfig)
 from transformers import BertForTokenClassification, RobertaForTokenClassification, AlbertForTokenClassification, ViTForImageClassification, SwinForImageClassification, DeiTModel, ConvNextForImageClassification
-from transformers import T5ForConditionalGeneration, T5EncoderModel
+from transformers import T5ForConditionalGeneration, BloomForTokenClassification, DistilBertForTokenClassification, DebertaForTokenClassification, GPTNeoForTokenClassification, GPT2ForTokenClassification
+from transformers import AutoTokenizer
 
 import ot
 import torch.nn.functional as F
@@ -84,13 +85,32 @@ def model_select(args):
     elif args.text_model_name == 'electra':
         model_path1 = './models/electra-base-discriminator'
         text_config = AutoConfig.from_pretrained(model_path1)
-        text_pretrained_dict = AlbertForTokenClassification.from_pretrained(
-            model_path1).state_dict()
+        text_pretrained_dict = AlbertForTokenClassification.from_pretrained(model_path1).state_dict()
     elif args.text_model_name == 'flant5':
         model_path1 = './data/models/flant5'
         text_config = AutoConfig.from_pretrained(model_path1)
-        text_pretrained_dict = T5ForConditionalGeneration.from_pretrained(
-            model_path1).state_dict()
+        text_pretrained_dict = T5ForConditionalGeneration.from_pretrained(model_path1).state_dict()
+    elif args.text_model_name == 'bloom':
+        model_path1 = './data/models/bloom'
+        text_config = AutoConfig.from_pretrained(model_path1)
+        text_pretrained_dict = BloomForTokenClassification.from_pretrained(model_path1).state_dict()
+    elif args.text_model_name == 'distilbert':
+        model_path1 = './data/models/distilbert'
+        text_config = AutoConfig.from_pretrained(model_path1)
+        text_pretrained_dict = DistilBertForTokenClassification.from_pretrained(model_path1).state_dict()
+    elif args.text_model_name == 'deberta':
+        model_path1 = './data/models/deberta'
+        text_config = AutoConfig.from_pretrained(model_path1)
+        text_pretrained_dict = DebertaForTokenClassification.from_pretrained(model_path1).state_dict()
+    elif args.text_model_name == 'gptneo':
+        model_path1 = './data/models/gptneo'
+        text_config = AutoConfig.from_pretrained(model_path1)
+        text_pretrained_dict = GPTNeoForTokenClassification.from_pretrained(model_path1).state_dict()
+    elif args.text_model_name == 'gpt2':
+        model_path1 = './data/models/gpt2'
+        tokenizer = AutoTokenizer.from_pretrained("gpt2")
+        text_config = AutoConfig.from_pretrained(model_path1, vocab_size=len(tokenizer))
+        text_pretrained_dict = GPT2ForTokenClassification.from_pretrained(model_path1).state_dict()
 
     else:
         os.error("出错了")
