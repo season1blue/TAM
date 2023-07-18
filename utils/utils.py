@@ -9,8 +9,8 @@ from tqdm import tqdm
 from transformers.models.auto.modeling_auto import MODEL_MAPPING
 from transformers import (WEIGHTS_NAME, AutoConfig)
 from transformers import BertForTokenClassification, RobertaForTokenClassification, AlbertForTokenClassification, ViTForImageClassification, SwinForImageClassification, DeiTModel, ConvNextForImageClassification
-from transformers import T5ForConditionalGeneration, BloomForTokenClassification, DistilBertForTokenClassification, DebertaForTokenClassification, GPTNeoForTokenClassification, GPT2ForTokenClassification
-from transformers import AutoTokenizer
+from transformers import T5ForConditionalGeneration, BloomForTokenClassification, DistilBertForTokenClassification, DebertaForTokenClassification, GPTNeoForTokenClassification, GPT2ForTokenClassification, BloomModel
+from transformers import AutoTokenizer, BartModel, T5Model
 
 import ot
 import torch.nn.functional as F
@@ -43,12 +43,15 @@ def parse_arg():
     parser.add_argument("--save_steps", type=int, default=300, help="Save checkpoint every X updates steps.")  # origin 500
     parser.add_argument("--max_steps", default=-1, type=int, help="If > 0: set total number of training steps to perform. Override num_train_epochs.",)
     
+    parser.add_argument('--device_id', type=str, default="cuda:0")
+
     parser.add_argument("--enable_log", action="store_true")
     parser.add_argument("--add_gan", action="store_true")
     parser.add_argument("--add_gan_loss", action="store_true", help="有提升就是会慢，平时可以收起来")
     parser.add_argument("--add_cycle", action="store_true")
     parser.add_argument("--add_gpt", action="store_true")
     parser.add_argument("--add_llm", action="store_true")
+    parser.add_argument("--only_text_loss", action="store_true")
 
     return parser.parse_args()
 
@@ -89,11 +92,11 @@ def model_select(args):
     elif args.text_model_name == 'flant5':
         model_path1 = './data/models/flant5'
         text_config = AutoConfig.from_pretrained(model_path1)
-        text_pretrained_dict = T5ForConditionalGeneration.from_pretrained(model_path1).state_dict()
+        text_pretrained_dict = T5Model.from_pretrained(model_path1).state_dict()
     elif args.text_model_name == 'bloom':
         model_path1 = './data/models/bloom'
         text_config = AutoConfig.from_pretrained(model_path1)
-        text_pretrained_dict = BloomForTokenClassification.from_pretrained(model_path1).state_dict()
+        text_pretrained_dict = BloomModel.from_pretrained(model_path1).state_dict()
     elif args.text_model_name == 'distilbert':
         model_path1 = './data/models/distilbert'
         text_config = AutoConfig.from_pretrained(model_path1)
@@ -111,10 +114,15 @@ def model_select(args):
         tokenizer = AutoTokenizer.from_pretrained("gpt2")
         text_config = AutoConfig.from_pretrained(model_path1, vocab_size=len(tokenizer))
         text_pretrained_dict = GPT2ForTokenClassification.from_pretrained(model_path1).state_dict()
+    elif args.text_model_name == 'bart':
+        model_path1 = './data/models/bart'
+        tokenizer = AutoTokenizer.from_pretrained(model_path1)
+        text_config = AutoConfig.from_pretrained(model_path1, vocab_size=len(tokenizer))
+        text_pretrained_dict = BartModel.from_pretrained(model_path1).state_dict()
 
     else:
         os.error("出错了")
-        exit()
+        exit("ERROR")
 
     # image pretrained model selected
     if args.image_model_name == 'vit':  # HERE

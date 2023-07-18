@@ -12,7 +12,9 @@ import torchvision
 import numpy as np
 import os
 from transformers import RobertaModel, BertModel, AlbertModel, ElectraModel, ViTModel, SwinModel, DeiTModel, ConvNextModel
-from transformers import T5EncoderModel, BloomModel, DistilBertModel, DebertaModel, GPT2Model, GPTNeoModel, AutoTokenizer
+from transformers import T5EncoderModel, BloomModel, DistilBertModel, DebertaModel, GPT2Model, GPTNeoModel, AutoTokenizer, BloomForTokenClassification
+from transformers import BartModel, T5Model
+from transformers.models.bart.modeling_bart import BartClassificationHead
 
 from model.modeling_dtca import MultiHeadAttention
 from model.modeling_dtca import ScaledDotProductAttention
@@ -47,9 +49,10 @@ class GANModel(nn.Module):
         elif text_model_name == 'bert':
             self.bert = BertModel(text_config, add_pooling_layer=False)
         elif text_model_name == 'flant5':
-            self.flant5 = T5EncoderModel(text_config)
+            self.flant5 = T5Model.from_pretrained("./data/models/flant5")
         elif text_model_name == 'bloom':
-            self.bloom = BloomModel(text_config)
+            # self.bloom = BloomModel(text_config)
+            self.bloom = BloomModel.from_pretrained("./data/models/bloom")
         elif text_model_name == 'distilbert':
             self.distilbert = DistilBertModel(text_config)
         elif text_model_name == 'deberta':
@@ -60,6 +63,8 @@ class GANModel(nn.Module):
             self.gpt2 = GPT2Model(text_config)
             # tokenizer = AutoTokenizer.from_pretrained("gpt2")
             self.gpt2.resize_token_embeddings(50258)
+        elif text_model_name == 'bart':
+            self.bart = BartModel.from_pretrained("./data/models/bart")
 
 
         self.vit = ViTModel(vision_config)
@@ -71,7 +76,7 @@ class GANModel(nn.Module):
         self.text_config = text_config  # text config
         self.vision_config = vision_config  # vision config
         self.text_num_labels = text_num_labels
-        
+
         text_config.hidden_size = 768
 
         self.image_text_cross = MultiHeadAttention(
@@ -93,16 +98,19 @@ class GANModel(nn.Module):
 
         self.encoder = UnimoEncoder(vision_config=self.vision_config, text_config=self.text_config)
         self.args = args
-        
+
         # if self.args.add_llm:
         #     self.llm_model = llm_model.eval()
         self.llm_roberta_cross = MultiHeadAttention(
             8, text_config.hidden_size, text_config.hidden_size, text_config.hidden_size)
 
-        self.llm_linear = nn.Linear(4096, 768)
+        self.llm_linear = nn.Linear(4096, 768, bias=False)
         self.roberta_linear = nn.Linear(768, 768)
         self.bloom_linear = nn.Linear(1024, 768)
         self.gptneo_linear = nn.Linear(2048, 768)
+        self.classification_head = BartClassificationHead(
+             1024,  text_config.hidden_size, self.text_num_labels, text_config.hidden_dropout_prob,
+        )
 
 
 
@@ -134,10 +142,20 @@ class GANModel(nn.Module):
         image_outputs = self.vit(pixel_values, head_mask=head_mask)
         image_last_hidden_states = image_outputs["last_hidden_state"]  # 32, 197, 768
         # image_last_hidden_states = image_feature.float()
-        
+
         if self.text_model_name == "flant5":
-            text_outputs = self.flant5(input_ids, attention_mask=attention_mask, output_attentions=output_attentions, output_hidden_states=output_hidden_states, return_dict=return_dict)
+            decoder_input_ids = self.flant5._shift_right(input_ids)
+
+            text_outputs = self.flant5(
+                input_ids,
+                decoder_input_ids=decoder_input_ids,
+                attention_mask=attention_mask,
+                output_attentions=output_attentions,
+                output_hidden_states=output_hidden_states,
+                return_dict=return_dict)
             text_last_hidden_states = text_outputs["last_hidden_state"]
+
+            
         elif self.text_model_name == "roberta":
             text_outputs = self.roberta(input_ids, attention_mask=attention_mask, token_type_ids=token_type_ids, position_ids=position_ids, head_mask=head_mask, inputs_embeds=inputs_embeds, output_attentions=output_attentions, output_hidden_states=output_hidden_states, return_dict=return_dict)
             text_last_hidden_states = text_outputs["last_hidden_state"]
@@ -155,7 +173,7 @@ class GANModel(nn.Module):
         elif self.text_model_name == "bloom":
             text_outputs = self.bloom(input_ids, attention_mask=attention_mask)
             text_last_hidden_states = text_outputs["last_hidden_state"]
-            text_last_hidden_states = self.bloom_linear(text_last_hidden_states)
+            # text_last_hidden_states = self.bloom_linear(text_last_hidden_states)
         elif self.text_model_name == "gptneo":
             text_outputs = self.gptneo(input_ids, attention_mask)
             text_last_hidden_states = text_outputs["last_hidden_state"]
@@ -164,6 +182,10 @@ class GANModel(nn.Module):
             # model.resize_token_embeddings(len(tokenizer))
             text_outputs = self.gpt2(input_ids, attention_mask=attention_mask)
             text_last_hidden_states = text_outputs["last_hidden_state"]
+        elif self.text_model_name == "bart":
+            text_outputs = self.bart(input_ids, attention_mask=attention_mask, output_attentions=output_attentions, output_hidden_states=output_hidden_states, return_dict=return_dict)
+            text_last_hidden_states = text_outputs["last_hidden_state"]
+            logits = self.classification_head(text_last_hidden_states)
 
         elif self.text_model_name == "llama":
             llm_feature = text_hidden_feature.float()
@@ -176,7 +198,7 @@ class GANModel(nn.Module):
             attention_feature, _ = self.llm_roberta_cross(roberta_feature, llm_feature, llm_feature)
             text_last_hidden_states = roberta_feature + attention_feature
             text_last_hidden_states = self.roberta_linear(text_last_hidden_states)
-            
+
 
         # ! Insert Begin
         # # pre vision
@@ -248,48 +270,33 @@ class GANModel(nn.Module):
         # ! Insert End
 
 
-        text_loss, cross_crf_loss, word_region_align_loss = 0, 0, 0
-
         # * text only # text_loss
         sequence_output1 = self.dropout(text_last_hidden_states)
         text_token_logits = self.classifier1(sequence_output1)
-        # word_region_align_loss = ot_dist.masked_select(targets == 0)
-        # getTextLoss: CrossEntropy
+
         text_loss = self.loss_fct(text_token_logits.view(-1, self.text_num_labels), labels.view(-1))
+        if self.args.only_text_loss :
+            loss = text_loss
+        else:
+            #  * vision-aware text # cross_crf_loss
+            image_text_cross_attention, _ = self.image_text_cross(text_last_hidden_states, image_last_hidden_states, image_last_hidden_states)
+            cross_logits = self.classifier0(image_text_cross_attention)
+            mask = (labels != -100)
+            mask[:, 0] = 1
+            cross_crf_loss = -self.CRF(cross_logits, cross_labels, mask=mask) / 10
 
-        #  * vision-aware text # cross_crf_loss
-        # image_text_cross_attention, _ = self.image_text_cross(text_last_hidden_states, image_last_hidden_states, image_last_hidden_states)
-        # cross_logits = self.classifier0(image_text_cross_attention)
-        # mask = (labels != -100)
-        # mask[:, 0] = 1
-        # cross_crf_loss = -self.CRF(cross_logits, cross_labels, mask=mask) / 10
+            # * token-patch matching # word patch align loss
+            batch_size, image_len, _ = image_last_hidden_states.shape
+            text_pad = (attention_mask == 1).clone().detach()
+            image_pad = torch.zeros(batch_size, image_len, dtype=torch.bool, device=attention_mask.device)
+            ot_dist = optimal_transport_dist(text_last_hidden_states, image_last_hidden_states, text_pad, image_pad)
+            word_region_align_loss = ot_dist.mean()
 
-        # * token-patch matching # word patch align loss
-        # if self.beta != 0 :
-        #     batch_size, image_len, _ = image_last_hidden_states.shape
-        #     text_pad = (attention_mask == 1).clone().detach()
-        #     image_pad = torch.zeros(batch_size, image_len, dtype=torch.bool, device=attention_mask.device)
-        #     ot_dist = optimal_transport_dist(text_last_hidden_states, image_last_hidden_states, text_pad, image_pad)
-        #     word_region_align_loss = ot_dist.mean()
+            loss = self.alpha * text_loss + cross_crf_loss  + self.beta * word_region_align_loss   #27
 
-        # TOTAL LOSS
-        loss = self.alpha * text_loss 
-        # + cross_crf_loss 
-        # + self.beta * word_region_align_loss   #27
-   
+
         if self.args.add_gan_loss:
             loss += cal_loss(output=encoder_outputs)
-
-        # if 0 < loss.item() < 100000  :
-        #     pass
-        # else:
-        #     print(text_loss.item(), cross_crf_loss.item(), word_region_align_loss.item(), gan_loss.item())
-        #     print(text_last_hidden_states)
-        #     print(image_last_hidden_states)
-        #     exit()
-
-        # loss = self.alpha * text_loss + cross_crf_loss + self.beta * word_region_align_loss
-        # end train
 
         return {"loss": loss, "logits": text_token_logits, "cross_logits": None, }
         # text_token_logits         4, 60, 5

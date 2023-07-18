@@ -65,7 +65,7 @@ class TrainInputProcess:
         elif self.text_model_type == 'roberta':
             self.tokenizer = AutoTokenizer.from_pretrained("./data/models/roberta-base", add_prefix_space=True)
         elif self.text_model_type == 'flant5':
-            self.tokenizer = AutoTokenizer.from_pretrained("./data/models/flant5")
+            self.tokenizer = AutoTokenizer.from_pretrained("./data/models/flant5", add_prefix_space=True)
         elif self.text_model_type == 'bloom':
             self.tokenizer = AutoTokenizer.from_pretrained("./data/models/bloom", add_prefix_space=True)
         elif self.text_model_type == "deberta":
@@ -79,6 +79,8 @@ class TrainInputProcess:
         elif self.text_model_type == "gpt2":
             self.tokenizer = AutoTokenizer.from_pretrained("./data/models/gpt2", add_prefix_space=True)
             self.tokenizer.add_special_tokens({'pad_token': '[PAD]'})
+        elif self.text_model_type == "bart":
+            self.tokenizer = AutoTokenizer.from_pretrained("./data/models/bart", add_prefix_space=True)
 
 
         self.image_model = "google/vit-base-patch16-224-in21k"

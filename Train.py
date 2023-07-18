@@ -22,7 +22,8 @@ from utils.evaluate import evaluate
 # parameters
 args = parse_arg()
 os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
-args.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
+args.device = torch.device(args.device_id if torch.cuda.is_available() else "cpu")
 
 
 # 1、创建一个logger
@@ -124,6 +125,7 @@ if not args.enable_log :
     logging.disable(logging.ERROR)
 logger.info("======================== New Round =============================")
 logger.info(f"{args.dataset_type}, add_gan:{args.add_gan}, add_gan_loss: {args.add_gan_loss}, add_gpt: {args.add_gpt}, text_model {args.text_model_name}")
+logger.info(args)
 
 for epoch in range(epochs_trained, int(args.epochs)):
 
